@@ -28,3 +28,5 @@ reqwest-eventsource = "0.6"
 futures-util = "0.3"
 # UUID for tool call IDs
 uuid = { version = "1", features = ["v4"] }
+# Terminal control (for interactive menus)
+crossterm = "0.28"
