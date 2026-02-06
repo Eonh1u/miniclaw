@@ -4,18 +4,18 @@ use crate::agent::Agent;
 
 pub async fn run_chat_loop(mut agent: Agent) -> Result<()> {
     let mut rl = DefaultEditor::new()?;
-    println!("Type your message. Type quit or exit to leave, /clear to reset.");
+    println!("Type your message. Type /quit to exit, /clear to reset.");
     loop {
         match rl.readline("You > ") {
             Ok(line) => {
                 let input = line.trim().to_string();
                 if input.is_empty() { continue; }
-                match input.to_lowercase().as_str() {
-                    "quit" | "exit" | "/quit" | "/exit" => {
+                match input.as_str() {
+                    "/quit" | "/exit" => {
                         println!("Goodbye!");
                         break;
                     }
-                    "/clear" | "clear" => {
+                    "/clear" => {
                         agent.clear_history();
                         println!("[Cleared]");
                         continue;
