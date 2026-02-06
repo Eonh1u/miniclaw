@@ -22,6 +22,7 @@ use crate::types::{ChatRequest, ChatResponse, Message, Role, ToolCall};
 /// Anthropic API client.
 pub struct AnthropicProvider {
     api_key: String,
+    api_base: String,
     client: reqwest::Client,
 }
 
@@ -90,9 +91,10 @@ struct ApiResponse {
 // --- Implementation ---
 
 impl AnthropicProvider {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: String, api_base: Option<String>) -> Self {
         Self {
             api_key,
+            api_base: api_base.unwrap_or_else(|| "https://api.anthropic.com".to_string()),
             client: reqwest::Client::new(),
         }
     }
@@ -215,9 +217,10 @@ impl LlmProvider for AnthropicProvider {
     async fn chat_completion(&self, request: &ChatRequest) -> Result<ChatResponse> {
         let api_request = self.build_api_request(request);
 
+        let url = format!("{}/v1/messages", self.api_base.trim_end_matches('/'));
         let response = self
             .client
-            .post("https://api.anthropic.com/v1/messages")
+            .post(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")

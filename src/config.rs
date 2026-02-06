@@ -23,10 +23,21 @@ pub struct AppConfig {
 /// LLM provider configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
-    /// Which provider to use: "anthropic" or "openai"
+    /// Which provider to use: "anthropic" or "openai_compatible"
+    /// - "anthropic": Anthropic Messages API (Claude)
+    /// - "openai_compatible": Any OpenAI-compatible API (OpenAI, Qwen, DeepSeek, etc.)
     pub provider: String,
-    /// The model name (e.g. "claude-sonnet-4-20250514")
+    /// The model name (e.g. "claude-sonnet-4-20250514", "qwen-plus", "deepseek-chat")
     pub model: String,
+    /// Custom API base URL (optional, uses provider default if not set)
+    /// Examples:
+    ///   - Anthropic:  "https://api.anthropic.com"
+    ///   - OpenAI:     "https://api.openai.com/v1"
+    ///   - Qwen:       "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    ///   - DeepSeek:   "https://api.deepseek.com/v1"
+    ///   - Local:      "http://localhost:11434/v1"
+    #[serde(default)]
+    pub api_base: Option<String>,
     /// Environment variable name that holds the API key
     pub api_key_env: String,
     /// Maximum tokens for LLM responses
@@ -53,9 +64,10 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             llm: LlmConfig {
-                provider: "anthropic".to_string(),
-                model: "claude-sonnet-4-20250514".to_string(),
-                api_key_env: "ANTHROPIC_API_KEY".to_string(),
+                provider: "openai_compatible".to_string(),
+                model: "qwen-plus".to_string(),
+                api_base: Some("https://dashscope.aliyuncs.com/compatible-mode/v1".to_string()),
+                api_key_env: "LLM_API_KEY".to_string(),
                 max_tokens: 4096,
             },
             agent: AgentConfig {
@@ -108,6 +120,9 @@ impl AppConfig {
         }
         if let Ok(model) = std::env::var("MINICLAW_MODEL") {
             config.llm.model = model;
+        }
+        if let Ok(api_base) = std::env::var("MINICLAW_API_BASE") {
+            config.llm.api_base = Some(api_base);
         }
 
         Ok(config)

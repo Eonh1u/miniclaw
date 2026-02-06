@@ -12,6 +12,7 @@
 //!   but they all implement the same trait so the rest of the code doesn't care
 
 pub mod anthropic;
+pub mod openai_compatible;
 
 use anyhow::Result;
 use async_trait::async_trait;
