@@ -38,10 +38,19 @@ pub struct LlmConfig {
     ///   - Local:      "http://localhost:11434/v1"
     #[serde(default)]
     pub api_base: Option<String>,
-    /// Environment variable name that holds the API key
+    /// API key value, can be set directly in config file
+    /// Priority: api_key > environment variable named by api_key_env
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Environment variable name that holds the API key (fallback if api_key is not set)
+    #[serde(default = "default_api_key_env")]
     pub api_key_env: String,
     /// Maximum tokens for LLM responses
     pub max_tokens: u32,
+}
+
+fn default_api_key_env() -> String {
+    "LLM_API_KEY".to_string()
 }
 
 /// Agent behavior configuration.
@@ -67,6 +76,7 @@ impl Default for AppConfig {
                 provider: "openai_compatible".to_string(),
                 model: "qwen-plus".to_string(),
                 api_base: Some("https://dashscope.aliyuncs.com/compatible-mode/v1".to_string()),
+                api_key: None,
                 api_key_env: "LLM_API_KEY".to_string(),
                 max_tokens: 4096,
             },
@@ -128,11 +138,26 @@ impl AppConfig {
         Ok(config)
     }
 
-    /// Resolve the actual API key value from the environment variable.
+    /// Resolve the API key.
+    ///
+    /// Priority:
+    /// 1. api_key field in config file (直接写在配置文件里)
+    /// 2. Environment variable named by api_key_env (默认 LLM_API_KEY)
     pub fn api_key(&self) -> Result<String> {
+        // 1. Check config file value first
+        if let Some(key) = &self.llm.api_key {
+            if !key.is_empty() {
+                return Ok(key.clone());
+            }
+        }
+
+        // 2. Fall back to environment variable
         std::env::var(&self.llm.api_key_env).with_context(|| {
             format!(
-                "API key not found. Please set the {} environment variable.",
+                "API key not found. Either:\n  \
+                 1. Set api_key in config file: {}\n  \
+                 2. Set environment variable: export {}=your-key",
+                Self::config_path().map(|p| p.display().to_string()).unwrap_or_default(),
                 self.llm.api_key_env
             )
         })

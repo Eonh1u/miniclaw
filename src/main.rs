@@ -39,6 +39,14 @@ async fn main() -> Result<()> {
     println!("  miniclaw - AI Assistant (v0.1.0)");
     println!("========================================");
 
+    // Auto-generate config file on first run
+    let config_path = AppConfig::config_path()?;
+    if !config_path.exists() {
+        let path = AppConfig::save_default()?;
+        println!("[Config] Created default config: {}", path.display());
+        println!("[Config] Edit it to set your api_key, model, etc.");
+    }
+
     let config = AppConfig::load()?;
     println!(
         "[Config] Provider: {}, Model: {}, API: {}",
