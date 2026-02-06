@@ -1,0 +1,30 @@
+[package]
+name = "miniclaw"
+version = "0.1.0"
+edition = "2021"
+description = "A minimal AI assistant tool inspired by OpenClaw, built in Rust"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+# Async trait support
+async-trait = "0.1"
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "stream"] }
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Configuration
+toml = "0.8"
+# CLI input
+rustyline = "15"
+# Home directory
+dirs = "6"
+# Error handling
+anyhow = "1"
+thiserror = "2"
+# Streaming SSE
+reqwest-eventsource = "0.6"
+futures-util = "0.3"
+# UUID for tool call IDs
+uuid = { version = "1", features = ["v4"] }
