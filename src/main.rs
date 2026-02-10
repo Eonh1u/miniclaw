@@ -4,6 +4,7 @@ mod config;
 mod llm;
 mod tools;
 mod types;
+mod ui;
 
 use anyhow::{bail, Result};
 use config::AppConfig;
@@ -11,6 +12,7 @@ use llm::LlmProvider;
 use llm::anthropic::AnthropicProvider;
 use llm::openai_compatible::OpenAiCompatibleProvider;
 use tools::create_default_router;
+use ui::Ui;
 
 /// Create the LLM provider based on config.
 fn create_llm_provider(config: &AppConfig) -> Result<Box<dyn LlmProvider>> {
@@ -60,5 +62,26 @@ async fn main() -> Result<()> {
     let agent = agent::Agent::new(llm_provider, tool_router, config);
     println!("[Agent] Ready!");
 
-    cli::run_chat_loop(agent).await
+    // Determine UI type based on command-line arguments or environment
+    let ui_type = std::env::var("MINICLAW_UI")
+        .unwrap_or_else(|_| "terminal".to_string())
+        .to_lowercase();
+
+    match ui_type.as_str() {
+        "ratatui" | "tui" | "modern" => {
+            let mut ui = ui::ratatui_ui::RatatuiUi::new();
+            ui.run(agent).await?;
+        }
+        "terminal" | "simple" | "cli" => {
+            let mut ui = ui::terminal_ui::TerminalUi {};
+            ui.run(agent).await?;
+        }
+        _ => {
+            println!("Unknown UI type: {}, using terminal UI", ui_type);
+            let mut ui = ui::terminal_ui::TerminalUi {};
+            ui.run(agent).await?;
+        }
+    }
+
+    Ok(())
 }

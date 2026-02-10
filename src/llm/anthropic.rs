@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::LlmProvider;
-use crate::types::{ChatRequest, ChatResponse, Message, Role, ToolCall};
+use crate::types::{ChatRequest, ChatResponse, Role, ToolCall};
 
 /// Anthropic API client.
 pub struct AnthropicProvider {
