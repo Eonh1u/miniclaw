@@ -33,12 +33,21 @@ pub enum UiEvent {
     Command(String),
 }
 
+/// What should happen when a UI exits its run loop.
+#[derive(Debug, Clone)]
+pub enum UiExitAction {
+    /// User wants to quit the application entirely.
+    Quit,
+    /// User wants to switch to another UI.
+    SwitchUi(String),
+}
+
 /// Trait that all UI implementations must follow.
 #[async_trait]
 pub trait Ui: Send {
     /// Start the UI and begin processing events.
-    /// This should be the main event loop for the UI.
-    async fn run(&mut self, agent: Agent) -> Result<()>;
+    /// Returns the agent back (so another UI can take over) plus the exit action.
+    async fn run(&mut self, agent: Agent) -> Result<(Agent, UiExitAction)>;
 
     /// Send an event from the agent to the UI.
     async fn send_event(&mut self, event: UiEvent) -> Result<()>;
@@ -56,7 +65,7 @@ pub mod terminal_ui {
 
     #[async_trait]
     impl Ui for TerminalUi {
-        async fn run(&mut self, agent: Agent) -> Result<()> {
+        async fn run(&mut self, agent: Agent) -> Result<(Agent, UiExitAction)> {
             cli::run_chat_loop(agent).await
         }
 

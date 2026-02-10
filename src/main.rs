@@ -12,7 +12,8 @@ use llm::LlmProvider;
 use llm::anthropic::AnthropicProvider;
 use llm::openai_compatible::OpenAiCompatibleProvider;
 use tools::create_default_router;
-use ui::Ui;
+use crossterm::terminal;
+use ui::{Ui, UiExitAction};
 
 /// Create the LLM provider based on config.
 fn create_llm_provider(config: &AppConfig) -> Result<Box<dyn LlmProvider>> {
@@ -59,27 +60,39 @@ async fn main() -> Result<()> {
 
     let llm_provider = create_llm_provider(&config)?;
     let tool_router = create_default_router();
-    let agent = agent::Agent::new(llm_provider, tool_router, config);
+    let mut agent = agent::Agent::new(llm_provider, tool_router, config);
     println!("[Agent] Ready!");
 
-    // Determine UI type based on command-line arguments or environment
-    let ui_type = std::env::var("MINICLAW_UI")
-        .unwrap_or_else(|_| "terminal".to_string())
+    // Determine initial UI type based on environment variable
+    let mut ui_type = std::env::var("MINICLAW_UI")
+        .unwrap_or_else(|_| "tui".to_string())
         .to_lowercase();
 
-    match ui_type.as_str() {
-        "ratatui" | "tui" | "modern" => {
-            let mut ui = ui::ratatui_ui::RatatuiUi::new();
-            ui.run(agent).await?;
-        }
-        "terminal" | "simple" | "cli" => {
-            let mut ui = ui::terminal_ui::TerminalUi {};
-            ui.run(agent).await?;
-        }
-        _ => {
-            println!("Unknown UI type: {}, using terminal UI", ui_type);
-            let mut ui = ui::terminal_ui::TerminalUi {};
-            ui.run(agent).await?;
+    // UI loop: allows switching between UIs at runtime
+    loop {
+        let exit_action = match ui_type.as_str() {
+            "ratatui" | "tui" | "modern" => {
+                let mut ui = ui::ratatui_ui::RatatuiUi::new();
+                let (returned_agent, action) = ui.run(agent).await?;
+                agent = returned_agent;
+                action
+            }
+            _ => {
+                let mut ui = ui::terminal_ui::TerminalUi {};
+                let (returned_agent, action) = ui.run(agent).await?;
+                agent = returned_agent;
+                action
+            }
+        };
+
+        match exit_action {
+            UiExitAction::Quit => break,
+            UiExitAction::SwitchUi(target) => {
+                // Ensure terminal is in a clean state before switching
+                let _ = terminal::disable_raw_mode();
+                println!("[Switching to {} UI...]", target);
+                ui_type = target;
+            }
         }
     }
 

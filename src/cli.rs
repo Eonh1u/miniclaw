@@ -24,6 +24,7 @@ use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
 use crate::agent::Agent;
+use crate::ui::UiExitAction;
 
 // --- Command definitions ---
 
@@ -35,6 +36,7 @@ struct Command {
 const COMMANDS: &[Command] = &[
     Command { name: "/help",  description: "Show available commands" },
     Command { name: "/clear", description: "Clear conversation history" },
+    Command { name: "/ui",    description: "Switch to TUI mode (ratatui)" },
     Command { name: "/quit",  description: "Exit the program" },
 ];
 
@@ -215,12 +217,16 @@ impl Helper for MiniclawHelper {}
 
 // --- Execute a command ---
 
-/// Execute a slash command. Returns true if the loop should break (exit).
-fn execute_command(cmd: &str, agent: &mut Agent) -> bool {
+/// Execute a slash command. Returns Some(action) if the loop should break.
+fn execute_command(cmd: &str, agent: &mut Agent) -> Option<UiExitAction> {
     match cmd {
-        "/quit" => {
+        "/quit" | "/exit" => {
             println!("Goodbye!");
-            return true;
+            return Some(UiExitAction::Quit);
+        }
+        "/ui" => {
+            println!("[Switching to TUI mode...]");
+            return Some(UiExitAction::SwitchUi("tui".to_string()));
         }
         "/clear" => {
             agent.clear_history();
@@ -238,12 +244,12 @@ fn execute_command(cmd: &str, agent: &mut Agent) -> bool {
             println!("[Unknown command: {}. Type / to see available commands]", other);
         }
     }
-    false
+    None
 }
 
 // --- Chat loop ---
 
-pub async fn run_chat_loop(mut agent: Agent) -> Result<()> {
+pub async fn run_chat_loop(mut agent: Agent) -> Result<(Agent, UiExitAction)> {
     let helper = MiniclawHelper;
     let mut rl = Editor::new()?;
     rl.set_helper(Some(helper));
@@ -251,6 +257,8 @@ pub async fn run_chat_loop(mut agent: Agent) -> Result<()> {
     println!();
     println!("Type your message, or / to select a command.");
     println!();
+
+    let exit_action;
 
     loop {
         match rl.readline("You > ") {
@@ -264,7 +272,8 @@ pub async fn run_chat_loop(mut agent: Agent) -> Result<()> {
                 if input == "/" {
                     match show_command_menu() {
                         Ok(Some(cmd)) => {
-                            if execute_command(&cmd, &mut agent) {
+                            if let Some(action) = execute_command(&cmd, &mut agent) {
+                                exit_action = action;
                                 break;
                             }
                         }
@@ -280,7 +289,8 @@ pub async fn run_chat_loop(mut agent: Agent) -> Result<()> {
 
                 // Direct slash command (e.g. /quit typed fully)
                 if input.starts_with('/') {
-                    if execute_command(&input, &mut agent) {
+                    if let Some(action) = execute_command(&input, &mut agent) {
+                        exit_action = action;
                         break;
                     }
                     continue;
@@ -297,17 +307,20 @@ pub async fn run_chat_loop(mut agent: Agent) -> Result<()> {
             }
             Err(ReadlineError::Interrupted) => {
                 println!("\nGoodbye!");
+                exit_action = UiExitAction::Quit;
                 break;
             }
             Err(ReadlineError::Eof) => {
                 println!("Goodbye!");
+                exit_action = UiExitAction::Quit;
                 break;
             }
             Err(err) => {
                 println!("[Input error: {}]", err);
+                exit_action = UiExitAction::Quit;
                 break;
             }
         }
     }
-    Ok(())
+    Ok((agent, exit_action))
 }
