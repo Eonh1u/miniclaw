@@ -31,6 +31,7 @@ crossterm = "0.28"
 # TUI framework
 ratatui = "0.29"
 chrono = { version = "0.4.44", features = ["serde"] }
+pulldown-cmark = { version = "0.13.1", default-features = false }
 
 [dev-dependencies]
 tempfile = "3.26.0"

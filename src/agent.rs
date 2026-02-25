@@ -3,12 +3,29 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use tokio::sync::mpsc;
 
 use crate::config::AppConfig;
 use crate::llm::LlmProvider;
 use crate::rules;
 use crate::tools::ToolRouter;
 use crate::types::{ChatRequest, ChatResponse, Message, TokenUsage};
+
+/// Events emitted by the Agent during processing, allowing the TUI
+/// to display real-time progress (tool calls, intermediate text, etc.).
+#[derive(Debug, Clone)]
+pub enum AgentEvent {
+    /// Intermediate text from LLM emitted alongside tool_calls.
+    LlmText(String),
+    /// A tool is about to be executed.
+    ToolStart { name: String },
+    /// A tool finished executing.
+    ToolEnd { name: String, success: bool },
+    /// Final response ready.
+    Done(String),
+    /// An error occurred.
+    Error(String),
+}
 
 /// Cumulative usage statistics tracked across the session.
 #[derive(Debug, Clone, Default)]
@@ -66,8 +83,18 @@ impl Agent {
         }
     }
 
-    pub async fn process_message(&mut self, user_input: &str) -> Result<String> {
+    pub async fn process_message(
+        &mut self,
+        user_input: &str,
+        event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
+    ) -> Result<String> {
         self.messages.push(Message::user(user_input));
+
+        let emit = |evt: AgentEvent| {
+            if let Some(tx) = &event_tx {
+                let _ = tx.send(evt);
+            }
+        };
 
         let mut iterations = 0;
         let max_iterations = self.config.agent.max_iterations;
@@ -75,10 +102,12 @@ impl Agent {
         loop {
             iterations += 1;
             if iterations > max_iterations {
-                return Ok(format!(
+                let msg = format!(
                     "[Agent stopped: reached maximum of {} iterations]",
                     max_iterations
-                ));
+                );
+                emit(AgentEvent::Done(msg.clone()));
+                return Ok(msg);
             }
 
             let request = ChatRequest {
@@ -97,20 +126,35 @@ impl Agent {
             self.stats.record_usage(&response.usage);
 
             if response.has_tool_calls() {
+                if !response.content.is_empty() {
+                    emit(AgentEvent::LlmText(response.content.clone()));
+                }
+
                 self.messages.push(Message::assistant_with_tool_calls(
                     &response.content,
                     response.tool_calls.clone(),
                 ));
 
                 for tool_call in &response.tool_calls {
+                    emit(AgentEvent::ToolStart {
+                        name: tool_call.name.clone(),
+                    });
+
                     let result = self
                         .tool_router
                         .execute(&tool_call.name, &tool_call.arguments)
                         .await;
-                    let result_text = match result {
-                        Ok(output) => output,
-                        Err(e) => format!("Error: {}", e),
+
+                    let (result_text, success) = match result {
+                        Ok(output) => (output, true),
+                        Err(e) => (format!("Error: {}", e), false),
                     };
+
+                    emit(AgentEvent::ToolEnd {
+                        name: tool_call.name.clone(),
+                        success,
+                    });
+
                     self.messages
                         .push(Message::tool_result(&tool_call.id, &result_text));
                 }
@@ -118,6 +162,7 @@ impl Agent {
             }
 
             self.messages.push(Message::assistant(&response.content));
+            emit(AgentEvent::Done(response.content.clone()));
             return Ok(response.content);
         }
     }

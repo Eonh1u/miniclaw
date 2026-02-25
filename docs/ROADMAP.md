@@ -44,6 +44,7 @@ miniclaw/
     │   └── list_directory.rs # 列目录工具
     └── ui/
         ├── mod.rs            # HeaderWidget trait + WidgetContext
+        ├── markdown.rs       # Markdown → ratatui 富文本转换
         └── ratatui_ui.rs     # Ratatui TUI 实现（StatsWidget, PetWidget）
 ```
 
@@ -74,6 +75,7 @@ miniclaw/
 - [x] 对话历史管理（`Vec<Message>`）
 - [x] 清空历史功能
 - [x] `SessionStats` 累计统计（input/output tokens, request count）
+- [x] `AgentEvent` 事件系统 + mpsc channel 实时推送工具调用进度
 
 ### 阶段 4：Tool System 框架 ✅ 完成
 
@@ -107,6 +109,8 @@ miniclaw/
 - [x] `[ui]` 配置段控制 widget 默认可见性
 - [x] 使用天数持久化（`~/.miniclaw/usage.json`）
 - [x] 斜杠命令自动补全（输入 `/` 即时弹出命令菜单，支持上下键选择、Enter 执行、Tab 补全、Esc 关闭）
+- [x] Markdown 渲染（`pulldown-cmark` 解析，支持标题/粗体/斜体/代码/列表/分割线样式）
+- [x] 工具调用实时进度显示（`⚡ 调用 xxx ...` / `✓ xxx 完成`，基于 AgentEvent + tokio::spawn 异步架构）
 - [ ] 流式输出（Streaming/SSE）—— `StreamChunk` 已定义但未接入
 - [ ] TUI 中逐 token 流式渲染
 - [ ] 对话历史持久化（退出后保留）
@@ -188,6 +192,7 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-25 | Markdown 渲染 + 工具调用进度显示：新增 `src/ui/markdown.rs` 模块（pulldown-cmark 解析）；引入 `AgentEvent` 枚举 + mpsc channel 实时推送工具调用事件；TUI 异步架构改造（tokio::spawn + Option&lt;Agent&gt;）；WidgetContext 解耦（stats 独立于 Agent）；新增 9 个 Markdown 单元测试 |
 | 2026-02-25 | 为所有工具和 ToolRouter 添加单元测试（22 个测试用例）；添加 `tempfile` dev-dependency；在项目规则中新增「测试规范」章节 |
 | 2026-02-25 | 注册 `write_file` 工具；新增 `list_directory` 工具（`src/tools/list_directory.rs`），支持递归遍历、可配置深度、文件大小显示、条目数截断 |
 | 2026-02-25 | 新增斜杠命令自动补全：输入 `/` 即时弹出浮动命令菜单，支持模糊过滤、Up/Down 键导航、Enter 直接执行、Tab 补全、Esc 关闭；新增 `SlashCommand` 定义和 `SlashAutocomplete` 状态管理 |

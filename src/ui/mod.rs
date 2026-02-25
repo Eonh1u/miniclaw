@@ -2,7 +2,7 @@
 
 use ratatui::Frame;
 
-use crate::agent::Agent;
+use crate::agent::SessionStats;
 
 /// What should happen when the UI exits its run loop.
 #[derive(Debug, Clone)]
@@ -12,7 +12,7 @@ pub enum UiExitAction {
 
 /// Context passed to header widgets each render frame.
 pub struct WidgetContext<'a> {
-    pub agent: &'a Agent,
+    pub stats: &'a SessionStats,
     pub messages: &'a [String],
     pub processing: bool,
     pub anim_tick: u32,
@@ -31,4 +31,5 @@ pub trait HeaderWidget {
 
 pub use ratatui_ui::PetState;
 
+pub mod markdown;
 pub mod ratatui_ui;

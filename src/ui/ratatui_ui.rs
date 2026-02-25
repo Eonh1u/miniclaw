@@ -11,7 +11,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::agent::Agent;
+use crate::agent::{Agent, AgentEvent};
 use crate::config::AppConfig;
 use crate::ui::{HeaderWidget, UiExitAction, WidgetContext};
 
@@ -229,7 +229,7 @@ impl HeaderWidget for StatsWidget {
     fn preferred_width(&self) -> Option<u16> { None } // fill remaining
 
     fn render(&self, f: &mut Frame, area: ratatui::layout::Rect, ctx: &WidgetContext) {
-        let stats = &ctx.agent.stats;
+        let stats = ctx.stats;
 
         let status_line = if ctx.processing {
             Line::from(vec![
@@ -389,6 +389,7 @@ pub struct RatatuiUi {
     header_widgets: Vec<Box<dyn HeaderWidget>>,
     first_use_date: Option<chrono::NaiveDate>,
     autocomplete: SlashAutocomplete,
+    cached_stats: crate::agent::SessionStats,
 }
 
 impl RatatuiUi {
@@ -415,6 +416,7 @@ impl RatatuiUi {
             header_widgets,
             first_use_date: ensure_first_use_date(),
             autocomplete: SlashAutocomplete::new(),
+            cached_stats: crate::agent::SessionStats::default(),
         }
     }
 
@@ -518,15 +520,18 @@ impl RatatuiUi {
                     Span::styled("You: ".to_string(), Style::default().fg(Color::Green)),
                     Span::raw(rest.to_string()),
                 ]));
+                text_lines.push(Line::from(""));
             } else if let Some(rest) = msg.strip_prefix("Assistant: ") {
-                text_lines.push(Line::from(vec![
-                    Span::styled("Assistant: ".to_string(), Style::default().fg(Color::Blue)),
-                    Span::raw(rest.to_string()),
-                ]));
+                text_lines.push(Line::from(Span::styled(
+                    "Assistant:".to_string(),
+                    Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+                )));
+                let md_lines = crate::ui::markdown::markdown_to_lines(rest);
+                text_lines.extend(md_lines);
             } else {
                 text_lines.push(Line::from(msg.clone()));
+                text_lines.push(Line::from(""));
             }
-            text_lines.push(Line::from(""));
         }
         text_lines
     }
@@ -627,13 +632,13 @@ impl RatatuiUi {
         f.render_widget(popup, popup_area);
     }
 
-    fn render_header(&self, f: &mut Frame, area: ratatui::layout::Rect, agent: &Agent) {
+    fn render_header(&self, f: &mut Frame, area: ratatui::layout::Rect, stats: &crate::agent::SessionStats) {
         if self.header_widgets.is_empty() {
             return;
         }
 
         let ctx = WidgetContext {
-            agent,
+            stats,
             messages: &self.messages,
             processing: self.processing,
             anim_tick: self.anim_tick,
@@ -643,7 +648,6 @@ impl RatatuiUi {
             first_use_date: self.first_use_date,
         };
 
-        // Build layout constraints from widgets
         let constraints: Vec<Constraint> = self.header_widgets.iter().map(|w| {
             match w.preferred_width() {
                 Some(width) => Constraint::Length(width),
@@ -660,7 +664,7 @@ impl RatatuiUi {
         }
     }
 
-    fn draw_ui(&mut self, f: &mut Frame, agent: &Agent) {
+    fn draw_ui(&mut self, f: &mut Frame, stats: &crate::agent::SessionStats) {
         let area = f.area();
 
         let header_h = if self.header_widgets.is_empty() { 0 } else { HEADER_HEIGHT };
@@ -671,7 +675,7 @@ impl RatatuiUi {
         ]).split(area);
 
         if header_h > 0 {
-            self.render_header(f, rows[0], agent);
+            self.render_header(f, rows[0], stats);
         }
         self.render_conversation(f, rows[1]);
         self.render_input(f, rows[2]);
@@ -713,7 +717,43 @@ impl RatatuiUi {
         None
     }
 
-    pub async fn run(mut self, mut agent: Agent) -> Result<(Agent, UiExitAction)> {
+    fn handle_agent_event(&mut self, event: AgentEvent) {
+        match event {
+            AgentEvent::LlmText(text) => {
+                self.messages.push(format!(
+                    "  \u{1f4ad} {}",
+                    text.lines().next().unwrap_or("").chars().take(80).collect::<String>()
+                ));
+                self.follow_tail = true;
+            }
+            AgentEvent::ToolStart { name } => {
+                self.messages.push(format!("  \u{26a1} 调用 {} ...", name));
+                self.follow_tail = true;
+            }
+            AgentEvent::ToolEnd { name, success } => {
+                let icon = if success { "\u{2713}" } else { "\u{2717}" };
+                let status = if success { "完成" } else { "失败" };
+                self.messages.push(format!("  {} {} {}", icon, name, status));
+                self.follow_tail = true;
+            }
+            AgentEvent::Done(response) => {
+                self.messages.push(format!("Assistant: {}", response));
+                self.pet_state = PetState::Happy;
+                self.processing = false;
+                self.idle_ticks = 0;
+                self.follow_tail = true;
+            }
+            AgentEvent::Error(e) => {
+                self.messages.push(format!("Error: {}", e));
+                self.pet_state = PetState::Error;
+                self.processing = false;
+                self.idle_ticks = 0;
+                self.follow_tail = true;
+            }
+        }
+    }
+
+    pub async fn run(mut self, agent: Agent) -> Result<(Agent, UiExitAction)> {
         let _ = terminal::disable_raw_mode();
         while event::poll(std::time::Duration::from_millis(5))? {
             let _ = event::read()?;
@@ -723,9 +763,45 @@ impl RatatuiUi {
         let _guard = TerminalGuard;
         let exit_action;
 
+        self.cached_stats = agent.stats.clone();
+
+        let mut event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<AgentEvent>> = None;
+        let mut agent_handle: Option<tokio::task::JoinHandle<Result<Agent>>> = None;
+        let mut agent_opt: Option<Agent> = Some(agent);
+
         loop {
             self.anim_tick = self.anim_tick.wrapping_add(1);
-            terminal.draw(|f| self.draw_ui(f, &agent))?;
+            let stats_snapshot = self.cached_stats.clone();
+            terminal.draw(|f| self.draw_ui(f, &stats_snapshot))?;
+
+            if let Some(rx) = &mut event_rx {
+                while let Ok(evt) = rx.try_recv() {
+                    let is_terminal = matches!(evt, AgentEvent::Done(_) | AgentEvent::Error(_));
+                    self.handle_agent_event(evt);
+                    if is_terminal {
+                        if let Some(handle) = agent_handle.take() {
+                            match handle.await {
+                                Ok(Ok(returned_agent)) => {
+                                    self.cached_stats = returned_agent.stats.clone();
+                                    agent_opt = Some(returned_agent);
+                                }
+                                Ok(Err(e)) => {
+                                    self.messages.push(format!("Error: {}", e));
+                                    self.pet_state = PetState::Error;
+                                    self.processing = false;
+                                }
+                                Err(e) => {
+                                    self.messages.push(format!("Error: task panicked: {}", e));
+                                    self.pet_state = PetState::Error;
+                                    self.processing = false;
+                                }
+                            }
+                        }
+                        event_rx = None;
+                        break;
+                    }
+                }
+            }
 
             if event::poll(std::time::Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
@@ -754,14 +830,16 @@ impl RatatuiUi {
                         }
                         KeyCode::Enter => {
                             if self.autocomplete.visible {
-                                self.apply_autocomplete_selection();
-                                let user_input = self.input.clone();
-                                self.input.clear();
-                                self.cursor_position = 0;
-                                self.autocomplete.dismiss();
-                                if let Some(action) = self.handle_command(&user_input, &mut agent) {
-                                    exit_action = action;
-                                    break;
+                                if let Some(ref mut agent) = agent_opt {
+                                    self.apply_autocomplete_selection();
+                                    let user_input = self.input.clone();
+                                    self.input.clear();
+                                    self.cursor_position = 0;
+                                    self.autocomplete.dismiss();
+                                    if let Some(action) = self.handle_command(&user_input, agent) {
+                                        exit_action = action;
+                                        break;
+                                    }
                                 }
                                 continue;
                             }
@@ -773,9 +851,11 @@ impl RatatuiUi {
                                 self.autocomplete.dismiss();
 
                                 if is_slash_command(&user_input) {
-                                    if let Some(action) = self.handle_command(&user_input, &mut agent) {
-                                        exit_action = action;
-                                        break;
+                                    if let Some(ref mut agent) = agent_opt {
+                                        if let Some(action) = self.handle_command(&user_input, agent) {
+                                            exit_action = action;
+                                            break;
+                                        }
                                     }
                                     continue;
                                 }
@@ -785,22 +865,18 @@ impl RatatuiUi {
                                 self.pet_state = PetState::Thinking;
                                 self.idle_ticks = 0;
                                 self.follow_tail = true;
-                                terminal.draw(|f| self.draw_ui(f, &agent))?;
 
-                                match agent.process_message(&user_input).await {
-                                    Ok(response) => {
-                                        self.messages.push(format!("Assistant: {}", response));
-                                        self.pet_state = PetState::Happy;
-                                    }
-                                    Err(e) => {
-                                        self.messages.push(format!("Error: {}", e));
-                                        self.pet_state = PetState::Error;
-                                    }
+                                if let Some(mut moved_agent) = agent_opt.take() {
+                                    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                                    event_rx = Some(rx);
+                                    let input_clone = user_input.clone();
+                                    agent_handle = Some(tokio::spawn(async move {
+                                        let result = moved_agent
+                                            .process_message(&input_clone, Some(tx))
+                                            .await;
+                                        result.map(|_| moved_agent)
+                                    }));
                                 }
-
-                                self.processing = false;
-                                self.idle_ticks = 0;
-                                self.follow_tail = true;
                             }
                         }
                         KeyCode::Up if !self.processing => {
@@ -845,6 +921,9 @@ impl RatatuiUi {
         }
 
         drop(_guard);
+        let agent = agent_opt.unwrap_or_else(|| {
+            panic!("Agent was not returned from background task");
+        });
         Ok((agent, exit_action))
     }
 }
