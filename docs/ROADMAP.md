@@ -21,6 +21,7 @@
 ```
 miniclaw/
 ├── Cargo.toml                # 依赖管理
+├── CLAUDE.md                 # Claude Code 项目规则文件
 ├── docs/
 │   ├── ARCHITECTURE.md       # 架构设计文档
 │   └── ROADMAP.md            # 本文档：规划与实现状态
@@ -29,6 +30,7 @@ miniclaw/
 └── src/
     ├── main.rs               # 入口，初始化并启动 TUI
     ├── config.rs             # 配置管理（TOML + 环境变量）
+    ├── rules.rs              # CLAUDE.md 规则文件发现与加载
     ├── types.rs              # 核心数据类型（Message, ToolCall, TokenUsage 等）
     ├── agent.rs              # Agent Loop 核心循环 + SessionStats
     ├── llm/
@@ -108,8 +110,9 @@ miniclaw/
 - [ ] 多行输入支持
 - [ ] 上下文窗口管理（token 限制截断/摘要）
 
-### 阶段 7：高级功能 🔲 未开始
+### 阶段 7：高级功能 🔶 进行中
 
+- [x] CLAUDE.md 规则文件支持（多层级发现、自动注入 system prompt）
 - [ ] 错误处理完善（网络超时重试、优雅降级）
 - [ ] 插件系统（外部工具动态加载）
 - [ ] MCP（Model Context Protocol）支持
@@ -182,5 +185,6 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-25 | 新增 CLAUDE.md 支持：添加 `src/rules.rs` 模块实现多层级规则文件发现与加载；Agent 初始化时自动将 CLAUDE.md 内容注入 system prompt；创建项目根目录 `CLAUDE.md` 文件 |
 | 2026-02-25 | 删除传统 CLI，TUI-only；添加 token 统计和使用天数；引入 HeaderWidget 插件系统（StatsWidget + PetWidget）；添加 `/stats`、`/pet` 命令和 `[ui]` 配置段 |
 | - | 初始版本：项目骨架、配置、Anthropic/OpenAI 兼容 LLM Client、Agent Loop、Tool System、read_file 工具、Ratatui TUI + Pet 动画 |

@@ -1,9 +1,12 @@
 //! Agent Loop - the core of the AI assistant.
 
+use std::path::Path;
+
 use anyhow::{Context, Result};
 
 use crate::config::AppConfig;
 use crate::llm::LlmProvider;
+use crate::rules;
 use crate::tools::ToolRouter;
 use crate::types::{ChatRequest, ChatResponse, Message, TokenUsage};
 
@@ -38,15 +41,28 @@ impl Agent {
         llm: Box<dyn LlmProvider>,
         tool_router: ToolRouter,
         config: AppConfig,
+        project_root: &Path,
     ) -> Self {
+        let system_prompt = Self::build_system_prompt(&config, project_root);
         let mut messages = Vec::new();
-        messages.push(Message::system(&config.agent.system_prompt));
+        messages.push(Message::system(&system_prompt));
         Self {
             llm,
             tool_router,
             messages,
             config,
             stats: SessionStats::default(),
+        }
+    }
+
+    fn build_system_prompt(config: &AppConfig, project_root: &Path) -> String {
+        let base = &config.agent.system_prompt;
+        match rules::build_rules_context(project_root) {
+            Some(rules_ctx) => format!(
+                "{}\n\n<project_rules>\n{}\n</project_rules>",
+                base, rules_ctx
+            ),
+            None => base.clone(),
         }
     }
 

@@ -48,6 +48,7 @@ flowchart TB
     Config[配置管理] --> LLMClient
     Config --> ToolRouter
     Config --> TUI
+    Rules[CLAUDE.md 规则] --> AgentLoop
 ```
 
 ---
@@ -175,7 +176,25 @@ pub trait Tool: Send + Sync {
 
 ---
 
-### 5. 配置管理（Configuration）
+### 5. 规则文件系统（Rules / CLAUDE.md）
+
+**作用**：发现并加载项目的 CLAUDE.md 规则文件，将其内容注入 Agent 的 system prompt。
+
+**查找策略**（模仿 Claude Code 的行为）：
+
+1. 从项目根目录向上遍历到文件系统根，收集沿途的 `CLAUDE.md` 和 `.claude/CLAUDE.md`
+2. 加载 `<project_root>/CLAUDE.md`
+3. 加载 `<project_root>/.claude/CLAUDE.md`
+
+**注入方式**：
+
+所有规则文件的内容按层级拼接，用 `<project_rules>` XML 标签包裹后追加到 system prompt 尾部。
+
+**关键文件**：`src/rules.rs`
+
+---
+
+### 6. 配置管理（Configuration）
 
 **配置文件**：`~/.miniclaw/config.toml`
 
@@ -206,7 +225,7 @@ show_pet = true
 
 ---
 
-### 6. 消息与类型系统（Message Types）
+### 7. 消息与类型系统（Message Types）
 
 - **Message**：role + content + tool_calls + tool_call_id
 - **ToolCall**：id + name + arguments
@@ -223,6 +242,7 @@ show_pet = true
 ```
 miniclaw/
 ├── Cargo.toml
+├── CLAUDE.md                 # Claude Code 项目规则
 ├── docs/
 │   ├── ARCHITECTURE.md   # 本文档
 │   └── ROADMAP.md        # 项目规划与实现状态
@@ -231,6 +251,7 @@ miniclaw/
 └── src/
     ├── main.rs               # 入口
     ├── config.rs             # 配置管理
+    ├── rules.rs              # CLAUDE.md 规则发现与加载
     ├── types.rs              # 核心数据类型
     ├── agent.rs              # Agent Loop + SessionStats
     ├── llm/

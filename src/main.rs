@@ -1,6 +1,7 @@
 mod agent;
 mod config;
 mod llm;
+mod rules;
 mod tools;
 mod types;
 mod ui;
@@ -40,7 +41,8 @@ async fn main() -> Result<()> {
     let config = AppConfig::load()?;
     let llm_provider = create_llm_provider(&config)?;
     let tool_router = create_default_router();
-    let agent = agent::Agent::new(llm_provider, tool_router, config.clone());
+    let project_root = std::env::current_dir().unwrap_or_default();
+    let agent = agent::Agent::new(llm_provider, tool_router, config.clone(), &project_root);
 
     let tui = ui::ratatui_ui::RatatuiUi::new(&config);
     let (_agent, _exit) = tui.run(agent).await?;
