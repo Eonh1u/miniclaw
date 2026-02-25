@@ -65,3 +65,95 @@ impl Tool for WriteFileTool {
         Ok(format!("Successfully wrote {} characters to file: {}", content.len(), path))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Runtime::new().unwrap()
+    }
+
+    #[test]
+    fn test_metadata() {
+        let tool = WriteFileTool;
+        assert_eq!(tool.name(), "write_file");
+        assert!(!tool.description().is_empty());
+        let schema = tool.parameters_schema();
+        let required = schema["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v == "path"));
+        assert!(required.iter().any(|v| v == "content"));
+    }
+
+    #[test]
+    fn test_write_new_file() {
+        let rt = rt();
+        rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("test.txt");
+
+            let result = WriteFileTool
+                .execute(json!({
+                    "path": file_path.to_str().unwrap(),
+                    "content": "hello world"
+                }))
+                .await
+                .unwrap();
+
+            assert!(result.contains("11 characters"));
+            assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "hello world");
+        });
+    }
+
+    #[test]
+    fn test_write_creates_parent_dirs() {
+        let rt = rt();
+        rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("sub").join("deep").join("file.txt");
+
+            WriteFileTool
+                .execute(json!({
+                    "path": file_path.to_str().unwrap(),
+                    "content": "nested"
+                }))
+                .await
+                .unwrap();
+
+            assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "nested");
+        });
+    }
+
+    #[test]
+    fn test_write_overwrites_existing() {
+        let rt = rt();
+        rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("overwrite.txt");
+            std::fs::write(&file_path, "old content").unwrap();
+
+            WriteFileTool
+                .execute(json!({
+                    "path": file_path.to_str().unwrap(),
+                    "content": "new content"
+                }))
+                .await
+                .unwrap();
+
+            assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "new content");
+        });
+    }
+
+    #[test]
+    fn test_missing_params() {
+        let rt = rt();
+        rt.block_on(async {
+            let r1 = WriteFileTool.execute(json!({ "content": "x" })).await;
+            assert!(r1.is_err());
+
+            let r2 = WriteFileTool.execute(json!({ "path": "/tmp/x" })).await;
+            assert!(r2.is_err());
+        });
+    }
+}

@@ -14,6 +14,8 @@
 //!   the same trait in a single collection (trait objects / dynamic dispatch)
 
 pub mod read_file;
+pub mod write_file;
+pub mod list_directory;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -115,9 +117,85 @@ impl Default for ToolRouter {
 pub fn create_default_router() -> ToolRouter {
     let mut router = ToolRouter::new();
     router.register(Box::new(read_file::ReadFileTool));
-    // More tools will be added here in Phase 5:
-    // router.register(Box::new(write_file::WriteFileTool));
-    // router.register(Box::new(exec_command::ExecCommandTool));
-    // router.register(Box::new(list_dir::ListDirTool));
+    router.register(Box::new(write_file::WriteFileTool));
+    router.register(Box::new(list_directory::ListDirectoryTool));
     router
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Runtime::new().unwrap()
+    }
+
+    #[test]
+    fn test_default_router_registers_all_tools() {
+        let router = create_default_router();
+        assert_eq!(router.len(), 3);
+        assert!(router.has_tool("read_file"));
+        assert!(router.has_tool("write_file"));
+        assert!(router.has_tool("list_directory"));
+        assert!(!router.has_tool("nonexistent"));
+    }
+
+    #[test]
+    fn test_router_definitions() {
+        let router = create_default_router();
+        let defs = router.definitions();
+        assert_eq!(defs.len(), 3);
+        let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"write_file"));
+        assert!(names.contains(&"list_directory"));
+    }
+
+    #[test]
+    fn test_router_execute_read_file() {
+        let rt = rt();
+        rt.block_on(async {
+            let router = create_default_router();
+            let mut tmp = tempfile::NamedTempFile::new().unwrap();
+            write!(tmp, "router test").unwrap();
+
+            let result = router
+                .execute("read_file", &format!(r#"{{"path":"{}"}}"#, tmp.path().display()))
+                .await
+                .unwrap();
+
+            assert_eq!(result, "router test");
+        });
+    }
+
+    #[test]
+    fn test_router_execute_unknown_tool() {
+        let rt = rt();
+        rt.block_on(async {
+            let router = create_default_router();
+            let result = router.execute("no_such_tool", "{}").await;
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("Unknown tool"));
+        });
+    }
+
+    #[test]
+    fn test_router_execute_invalid_json() {
+        let rt = rt();
+        rt.block_on(async {
+            let router = create_default_router();
+            let result = router.execute("read_file", "not json").await;
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("Invalid JSON"));
+        });
+    }
+
+    #[test]
+    fn test_empty_router() {
+        let router = ToolRouter::new();
+        assert!(router.is_empty());
+        assert_eq!(router.len(), 0);
+        assert!(router.definitions().is_empty());
+    }
 }

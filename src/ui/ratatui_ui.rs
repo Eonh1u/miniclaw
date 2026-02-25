@@ -4,16 +4,99 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal;
 use ratatui::{
-    layout::{Alignment, Constraint, Layout},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
 
 use crate::agent::Agent;
 use crate::config::AppConfig;
 use crate::ui::{HeaderWidget, UiExitAction, WidgetContext};
+
+// ── Slash Command Definitions ───────────────────────────────
+
+struct SlashCommand {
+    name: &'static str,
+    description: &'static str,
+}
+
+const SLASH_COMMANDS: &[SlashCommand] = &[
+    SlashCommand { name: "/help",  description: "Show available commands" },
+    SlashCommand { name: "/clear", description: "Clear conversation history" },
+    SlashCommand { name: "/stats", description: "Toggle stats panel" },
+    SlashCommand { name: "/pet",   description: "Toggle pet panel" },
+    SlashCommand { name: "/quit",  description: "Exit the program" },
+    SlashCommand { name: "/exit",  description: "Exit the program" },
+];
+
+/// Autocomplete popup state for slash commands.
+struct SlashAutocomplete {
+    visible: bool,
+    selected: usize,
+    filtered: Vec<usize>,
+}
+
+impl SlashAutocomplete {
+    fn new() -> Self {
+        Self {
+            visible: false,
+            selected: 0,
+            filtered: Vec::new(),
+        }
+    }
+
+    fn update_filter(&mut self, input: &str) {
+        if !input.starts_with('/') || input.contains(' ') {
+            self.visible = false;
+            self.filtered.clear();
+            self.selected = 0;
+            return;
+        }
+
+        let query = input.to_lowercase();
+        self.filtered = SLASH_COMMANDS
+            .iter()
+            .enumerate()
+            .filter(|(_, cmd)| cmd.name.starts_with(&query))
+            .map(|(i, _)| i)
+            .collect();
+
+        self.visible = !self.filtered.is_empty();
+        if self.selected >= self.filtered.len() {
+            self.selected = self.filtered.len().saturating_sub(1);
+        }
+    }
+
+    fn move_up(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+        } else {
+            self.selected = self.filtered.len().saturating_sub(1);
+        }
+    }
+
+    fn move_down(&mut self) {
+        if self.selected + 1 < self.filtered.len() {
+            self.selected += 1;
+        } else {
+            self.selected = 0;
+        }
+    }
+
+    fn selected_command(&self) -> Option<&'static str> {
+        self.filtered
+            .get(self.selected)
+            .map(|&i| SLASH_COMMANDS[i].name)
+    }
+
+    fn dismiss(&mut self) {
+        self.visible = false;
+        self.filtered.clear();
+        self.selected = 0;
+    }
+}
 
 struct TerminalGuard;
 impl Drop for TerminalGuard {
@@ -294,6 +377,7 @@ pub struct RatatuiUi {
     typing_intensity: u32,
     header_widgets: Vec<Box<dyn HeaderWidget>>,
     first_use_date: Option<chrono::NaiveDate>,
+    autocomplete: SlashAutocomplete,
 }
 
 impl RatatuiUi {
@@ -319,6 +403,7 @@ impl RatatuiUi {
             typing_intensity: 0,
             header_widgets,
             first_use_date: ensure_first_use_date(),
+            autocomplete: SlashAutocomplete::new(),
         }
     }
 
@@ -393,6 +478,15 @@ impl RatatuiUi {
             KeyCode::End   => { self.cursor_position = self.char_count(); }
             _ => {}
         }
+        self.autocomplete.update_filter(&self.input);
+    }
+
+    fn apply_autocomplete_selection(&mut self) {
+        if let Some(cmd) = self.autocomplete.selected_command() {
+            self.input = cmd.to_string();
+            self.cursor_position = self.input.chars().count();
+            self.autocomplete.dismiss();
+        }
     }
 
     fn move_cursor_start_of_word(&mut self) {
@@ -457,7 +551,7 @@ impl RatatuiUi {
         f.render_widget(p, area);
     }
 
-    fn render_input(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+    fn render_input(&self, f: &mut Frame, area: Rect) {
         let input_text = if self.processing { "Processing... Please wait." } else { &self.input[..] };
         let p = Paragraph::new(input_text)
             .block(Block::default().borders(Borders::ALL).title("Input (Ctrl+C quit)"));
@@ -466,6 +560,60 @@ impl RatatuiUi {
             let col = self.cursor_display_width();
             f.set_cursor_position((area.x + col + 1, area.y + 1));
         }
+    }
+
+    fn render_autocomplete(&self, f: &mut Frame, input_area: Rect) {
+        if !self.autocomplete.visible || self.processing {
+            return;
+        }
+
+        let item_count = self.autocomplete.filtered.len() as u16;
+        let popup_height = item_count + 2; // +2 for borders
+        let popup_width = 40u16.min(input_area.width);
+
+        let popup_area = Rect {
+            x: input_area.x,
+            y: input_area.y.saturating_sub(popup_height),
+            width: popup_width,
+            height: popup_height,
+        };
+
+        f.render_widget(Clear, popup_area);
+
+        let lines: Vec<Line> = self
+            .autocomplete
+            .filtered
+            .iter()
+            .enumerate()
+            .map(|(i, &cmd_idx)| {
+                let cmd = &SLASH_COMMANDS[cmd_idx];
+                let is_selected = i == self.autocomplete.selected;
+                let (bg, fg_name, fg_desc) = if is_selected {
+                    (Color::Cyan, Color::Black, Color::DarkGray)
+                } else {
+                    (Color::Reset, Color::Cyan, Color::DarkGray)
+                };
+                Line::from(vec![
+                    Span::styled(
+                        format!(" {:<8}", cmd.name),
+                        Style::default().fg(fg_name).bg(bg).add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }),
+                    ),
+                    Span::styled(
+                        format!(" {}", cmd.description),
+                        Style::default().fg(fg_desc).bg(bg),
+                    ),
+                ])
+            })
+            .collect();
+
+        let popup = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(" Commands ")
+                .title_style(Style::default().fg(Color::Cyan)),
+        );
+        f.render_widget(popup, popup_area);
     }
 
     fn render_header(&self, f: &mut Frame, area: ratatui::layout::Rect, agent: &Agent) {
@@ -516,6 +664,7 @@ impl RatatuiUi {
         }
         self.render_conversation(f, rows[1]);
         self.render_input(f, rows[2]);
+        self.render_autocomplete(f, rows[2]);
     }
 
     /// Handle a slash command. Returns Some(action) to break the loop, or None.
@@ -576,11 +725,41 @@ impl RatatuiUi {
                     }
 
                     match key.code {
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            exit_action = UiExitAction::Quit;
+                            break;
+                        }
+                        KeyCode::Esc if self.autocomplete.visible => {
+                            self.autocomplete.dismiss();
+                        }
+                        KeyCode::Up if self.autocomplete.visible => {
+                            self.autocomplete.move_up();
+                        }
+                        KeyCode::Down if self.autocomplete.visible => {
+                            self.autocomplete.move_down();
+                        }
+                        KeyCode::Tab if self.autocomplete.visible => {
+                            self.apply_autocomplete_selection();
+                        }
                         KeyCode::Enter => {
+                            if self.autocomplete.visible {
+                                self.apply_autocomplete_selection();
+                                let user_input = self.input.clone();
+                                self.input.clear();
+                                self.cursor_position = 0;
+                                self.autocomplete.dismiss();
+                                if let Some(action) = self.handle_command(&user_input, &mut agent) {
+                                    exit_action = action;
+                                    break;
+                                }
+                                continue;
+                            }
+
                             if !self.input.trim().is_empty() && !self.processing {
                                 let user_input = self.input.clone();
                                 self.input.clear();
                                 self.cursor_position = 0;
+                                self.autocomplete.dismiss();
 
                                 if user_input.starts_with('/') {
                                     if let Some(action) = self.handle_command(&user_input, &mut agent) {
@@ -613,15 +792,11 @@ impl RatatuiUi {
                                 self.follow_tail = true;
                             }
                         }
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            exit_action = UiExitAction::Quit;
-                            break;
-                        }
-                        KeyCode::Up => {
+                        KeyCode::Up if !self.processing => {
                             self.follow_tail = false;
                             self.scroll_offset = self.scroll_offset.saturating_sub(1);
                         }
-                        KeyCode::Down => {
+                        KeyCode::Down if !self.processing => {
                             self.scroll_offset += 1;
                         }
                         _ => {

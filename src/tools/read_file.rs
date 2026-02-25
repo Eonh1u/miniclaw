@@ -58,3 +58,61 @@ impl Tool for ReadFileTool {
         Ok(content)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::Write;
+
+    fn rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Runtime::new().unwrap()
+    }
+
+    #[test]
+    fn test_metadata() {
+        let tool = ReadFileTool;
+        assert_eq!(tool.name(), "read_file");
+        assert!(!tool.description().is_empty());
+        let schema = tool.parameters_schema();
+        assert_eq!(schema["required"][0], "path");
+    }
+
+    #[test]
+    fn test_read_existing_file() {
+        let rt = rt();
+        rt.block_on(async {
+            let mut tmp = tempfile::NamedTempFile::new().unwrap();
+            write!(tmp, "hello miniclaw").unwrap();
+
+            let result = ReadFileTool
+                .execute(json!({ "path": tmp.path().to_str().unwrap() }))
+                .await
+                .unwrap();
+
+            assert_eq!(result, "hello miniclaw");
+        });
+    }
+
+    #[test]
+    fn test_read_nonexistent_file() {
+        let rt = rt();
+        rt.block_on(async {
+            let result = ReadFileTool
+                .execute(json!({ "path": "/tmp/__miniclaw_no_such_file__" }))
+                .await;
+
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_missing_path_param() {
+        let rt = rt();
+        rt.block_on(async {
+            let result = ReadFileTool.execute(json!({})).await;
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("path"));
+        });
+    }
+}
