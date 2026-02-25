@@ -31,6 +31,17 @@ const SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand { name: "/exit",  description: "Exit the program" },
 ];
 
+/// Check if input looks like a slash command (e.g. "/help", "/clear"),
+/// as opposed to a file path like "/root/code/..." or "/tmp/file.txt".
+fn is_slash_command(input: &str) -> bool {
+    let input = input.trim();
+    if !input.starts_with('/') {
+        return false;
+    }
+    let after_slash = &input[1..];
+    !after_slash.is_empty() && after_slash.chars().all(|c| c.is_ascii_lowercase())
+}
+
 /// Autocomplete popup state for slash commands.
 struct SlashAutocomplete {
     visible: bool,
@@ -48,7 +59,7 @@ impl SlashAutocomplete {
     }
 
     fn update_filter(&mut self, input: &str) {
-        if !input.starts_with('/') || input.contains(' ') {
+        if !is_slash_command(input) && input != "/" {
             self.visible = false;
             self.filtered.clear();
             self.selected = 0;
@@ -761,7 +772,7 @@ impl RatatuiUi {
                                 self.cursor_position = 0;
                                 self.autocomplete.dismiss();
 
-                                if user_input.starts_with('/') {
+                                if is_slash_command(&user_input) {
                                     if let Some(action) = self.handle_command(&user_input, &mut agent) {
                                         exit_action = action;
                                         break;
