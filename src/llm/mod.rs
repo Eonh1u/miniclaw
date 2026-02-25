@@ -16,8 +16,9 @@ pub mod openai_compatible;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use tokio::sync::mpsc;
 
-use crate::types::{ChatRequest, ChatResponse};
+use crate::types::{ChatRequest, ChatResponse, StreamChunk};
 
 /// Trait that all LLM providers must implement.
 ///
@@ -31,6 +32,24 @@ pub trait LlmProvider: Send + Sync {
     /// This is the non-streaming version: it waits for the entire
     /// response before returning.
     async fn chat_completion(&self, request: &ChatRequest) -> Result<ChatResponse>;
+
+    /// Send a streaming chat completion request.
+    ///
+    /// Text deltas are sent via `chunk_tx` in real-time. The method
+    /// returns the fully accumulated `ChatResponse` when the stream ends.
+    /// Default implementation falls back to non-streaming.
+    async fn chat_completion_stream(
+        &self,
+        request: &ChatRequest,
+        chunk_tx: mpsc::UnboundedSender<StreamChunk>,
+    ) -> Result<ChatResponse> {
+        let response = self.chat_completion(request).await?;
+        if !response.content.is_empty() {
+            let _ = chunk_tx.send(StreamChunk::TextDelta(response.content.clone()));
+        }
+        let _ = chunk_tx.send(StreamChunk::Done);
+        Ok(response)
+    }
 
     /// Return the provider's display name (for logging).
     fn name(&self) -> &str;

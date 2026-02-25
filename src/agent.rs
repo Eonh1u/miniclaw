@@ -9,19 +9,21 @@ use crate::config::AppConfig;
 use crate::llm::LlmProvider;
 use crate::rules;
 use crate::tools::ToolRouter;
-use crate::types::{ChatRequest, ChatResponse, Message, TokenUsage};
+use crate::types::{ChatRequest, ChatResponse, Message, StreamChunk, TokenUsage};
 
 /// Events emitted by the Agent during processing, allowing the TUI
 /// to display real-time progress (tool calls, intermediate text, etc.).
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
-    /// Intermediate text from LLM emitted alongside tool_calls.
+    /// Incremental text chunk from streaming LLM response.
+    StreamDelta(String),
+    /// Intermediate text from LLM emitted alongside tool_calls (non-streaming fallback).
     LlmText(String),
     /// A tool is about to be executed.
     ToolStart { name: String },
     /// A tool finished executing.
     ToolEnd { name: String, success: bool },
-    /// Final response ready.
+    /// Final response ready (content may be empty if already streamed).
     Done(String),
     /// An error occurred.
     Error(String),
@@ -117,19 +119,30 @@ impl Agent {
                 max_tokens: self.config.llm.max_tokens,
             };
 
+            let (chunk_tx, mut chunk_rx) = mpsc::unbounded_channel::<StreamChunk>();
+
+            let event_tx_clone = event_tx.clone();
+            let forward_handle = tokio::spawn(async move {
+                while let Some(chunk) = chunk_rx.recv().await {
+                    if let StreamChunk::TextDelta(delta) = chunk {
+                        if let Some(tx) = &event_tx_clone {
+                            let _ = tx.send(AgentEvent::StreamDelta(delta));
+                        }
+                    }
+                }
+            });
+
             let response: ChatResponse = self
                 .llm
-                .chat_completion(&request)
+                .chat_completion_stream(&request, chunk_tx)
                 .await
-                .context("LLM call failed")?;
+                .context("LLM streaming call failed")?;
+
+            let _ = forward_handle.await;
 
             self.stats.record_usage(&response.usage);
 
             if response.has_tool_calls() {
-                if !response.content.is_empty() {
-                    emit(AgentEvent::LlmText(response.content.clone()));
-                }
-
                 self.messages.push(Message::assistant_with_tool_calls(
                     &response.content,
                     response.tool_calls.clone(),

@@ -2,10 +2,12 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
 use super::LlmProvider;
-use crate::types::{ChatRequest, ChatResponse, Role, ToolCall, TokenUsage};
+use crate::types::{ChatRequest, ChatResponse, Role, StreamChunk, ToolCall, TokenUsage};
 
 pub struct OpenAiCompatibleProvider {
     api_key: String,
@@ -84,6 +86,45 @@ struct ApiResponseMessage {
 struct ApiUsage {
     prompt_tokens: Option<u64>,
     completion_tokens: Option<u64>,
+}
+
+// --- Streaming Response Types ---
+
+#[derive(Deserialize, Debug)]
+struct StreamResponseChunk {
+    choices: Vec<StreamChoice>,
+    usage: Option<ApiUsage>,
+}
+
+#[derive(Deserialize, Debug)]
+struct StreamChoice {
+    delta: StreamDelta,
+}
+
+#[derive(Deserialize, Debug)]
+struct StreamDelta {
+    content: Option<String>,
+    tool_calls: Option<Vec<StreamToolCallDelta>>,
+}
+
+#[derive(Deserialize, Debug)]
+struct StreamToolCallDelta {
+    index: usize,
+    id: Option<String>,
+    function: Option<StreamFunctionDelta>,
+}
+
+#[derive(Deserialize, Debug)]
+struct StreamFunctionDelta {
+    name: Option<String>,
+    arguments: Option<String>,
+}
+
+#[derive(Default)]
+struct ToolCallAccumulator {
+    id: String,
+    name: String,
+    arguments: String,
 }
 
 // --- Implementation ---
@@ -232,6 +273,129 @@ impl LlmProvider for OpenAiCompatibleProvider {
             .context("Failed to parse API response")?;
 
         self.parse_response(api_response)
+    }
+
+    async fn chat_completion_stream(
+        &self,
+        request: &ChatRequest,
+        chunk_tx: mpsc::UnboundedSender<StreamChunk>,
+    ) -> Result<ChatResponse> {
+        let api_request = self.build_api_request(request);
+        let url = format!("{}/chat/completions", self.api_base.trim_end_matches('/'));
+
+        let mut body = serde_json::to_value(&api_request)
+            .context("Failed to serialize request")?;
+        body["stream"] = serde_json::json!(true);
+        body["stream_options"] = serde_json::json!({"include_usage": true});
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("Failed to send streaming request to {}", url))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_body = response.text().await.unwrap_or_default();
+            anyhow::bail!("API error ({}): {}", status, error_body);
+        }
+
+        let mut byte_stream = response.bytes_stream();
+        let mut buffer = String::new();
+        let mut content = String::new();
+        let mut tool_calls: Vec<ToolCallAccumulator> = Vec::new();
+        let mut usage: Option<TokenUsage> = None;
+
+        while let Some(chunk_result) = byte_stream.next().await {
+            let chunk_bytes = chunk_result.context("Stream read error")?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk_bytes));
+
+            while let Some(newline_pos) = buffer.find('\n') {
+                let line = buffer[..newline_pos].trim_end_matches('\r').to_string();
+                buffer = buffer[newline_pos + 1..].to_string();
+
+                if line.is_empty() {
+                    continue;
+                }
+
+                let data = match line.strip_prefix("data: ") {
+                    Some(d) => d,
+                    None => continue,
+                };
+
+                if data.trim() == "[DONE]" {
+                    let _ = chunk_tx.send(StreamChunk::Done);
+                    let final_tool_calls = tool_calls
+                        .into_iter()
+                        .map(|tc| ToolCall {
+                            id: tc.id,
+                            name: tc.name,
+                            arguments: tc.arguments,
+                        })
+                        .collect();
+                    return Ok(ChatResponse {
+                        content,
+                        tool_calls: final_tool_calls,
+                        usage,
+                    });
+                }
+
+                if let Ok(chunk_resp) = serde_json::from_str::<StreamResponseChunk>(data) {
+                    if let Some(choice) = chunk_resp.choices.first() {
+                        if let Some(ref text) = choice.delta.content {
+                            if !text.is_empty() {
+                                content.push_str(text);
+                                let _ = chunk_tx.send(StreamChunk::TextDelta(text.clone()));
+                            }
+                        }
+                        if let Some(ref tcs) = choice.delta.tool_calls {
+                            for tc_delta in tcs {
+                                while tool_calls.len() <= tc_delta.index {
+                                    tool_calls.push(ToolCallAccumulator::default());
+                                }
+                                let acc = &mut tool_calls[tc_delta.index];
+                                if let Some(ref id) = tc_delta.id {
+                                    acc.id = id.clone();
+                                }
+                                if let Some(ref func) = tc_delta.function {
+                                    if let Some(ref name) = func.name {
+                                        acc.name.push_str(name);
+                                    }
+                                    if let Some(ref args) = func.arguments {
+                                        acc.arguments.push_str(args);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(u) = chunk_resp.usage {
+                        usage = Some(TokenUsage {
+                            input_tokens: u.prompt_tokens.unwrap_or(0),
+                            output_tokens: u.completion_tokens.unwrap_or(0),
+                        });
+                    }
+                }
+            }
+        }
+
+        let _ = chunk_tx.send(StreamChunk::Done);
+        let final_tool_calls = tool_calls
+            .into_iter()
+            .map(|tc| ToolCall {
+                id: tc.id,
+                name: tc.name,
+                arguments: tc.arguments,
+            })
+            .collect();
+        Ok(ChatResponse {
+            content,
+            tool_calls: final_tool_calls,
+            usage,
+        })
     }
 
     fn name(&self) -> &str {

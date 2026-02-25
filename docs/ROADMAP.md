@@ -111,8 +111,8 @@ miniclaw/
 - [x] 斜杠命令自动补全（输入 `/` 即时弹出命令菜单，支持上下键选择、Enter 执行、Tab 补全、Esc 关闭）
 - [x] Markdown 渲染（`pulldown-cmark` 解析，支持标题/粗体/斜体/代码/列表/分割线样式）
 - [x] 工具调用实时进度显示（`⚡ 调用 xxx ...` / `✓ xxx 完成`，基于 AgentEvent + tokio::spawn 异步架构）
-- [ ] 流式输出（Streaming/SSE）—— `StreamChunk` 已定义但未接入
-- [ ] TUI 中逐 token 流式渲染
+- [x] 流式输出（Streaming/SSE）—— `LlmProvider::chat_completion_stream` 方法 + SSE 解析
+- [x] TUI 中逐 token 流式渲染（`StreamDelta` 事件 + `streaming_message_idx` 增量拼接）
 - [ ] 对话历史持久化（退出后保留）
 - [ ] 多行输入支持
 - [ ] 上下文窗口管理（token 限制截断/摘要）
@@ -192,6 +192,7 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-25 | 流式输出（Streaming/SSE）：`LlmProvider` trait 新增 `chat_completion_stream` 方法（含默认非流式回退）；OpenAI 兼容 API 和 Anthropic API 分别实现 SSE 流式解析（文本 delta + 工具调用 delta 累加）；Agent 通过 `tokio::spawn` 转发 `StreamChunk` 为 `AgentEvent::StreamDelta`；TUI 新增 `streaming_message_idx` 跟踪实现逐 token 增量渲染 |
 | 2026-02-25 | Markdown 渲染 + 工具调用进度显示：新增 `src/ui/markdown.rs` 模块（pulldown-cmark 解析）；引入 `AgentEvent` 枚举 + mpsc channel 实时推送工具调用事件；TUI 异步架构改造（tokio::spawn + Option&lt;Agent&gt;）；WidgetContext 解耦（stats 独立于 Agent）；新增 9 个 Markdown 单元测试 |
 | 2026-02-25 | 为所有工具和 ToolRouter 添加单元测试（22 个测试用例）；添加 `tempfile` dev-dependency；在项目规则中新增「测试规范」章节 |
 | 2026-02-25 | 注册 `write_file` 工具；新增 `list_directory` 工具（`src/tools/list_directory.rs`），支持递归遍历、可配置深度、文件大小显示、条目数截断 |

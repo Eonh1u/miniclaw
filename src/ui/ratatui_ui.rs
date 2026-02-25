@@ -390,6 +390,7 @@ pub struct RatatuiUi {
     first_use_date: Option<chrono::NaiveDate>,
     autocomplete: SlashAutocomplete,
     cached_stats: crate::agent::SessionStats,
+    streaming_message_idx: Option<usize>,
 }
 
 impl RatatuiUi {
@@ -417,6 +418,7 @@ impl RatatuiUi {
             first_use_date: ensure_first_use_date(),
             autocomplete: SlashAutocomplete::new(),
             cached_stats: crate::agent::SessionStats::default(),
+            streaming_message_idx: None,
         }
     }
 
@@ -719,6 +721,15 @@ impl RatatuiUi {
 
     fn handle_agent_event(&mut self, event: AgentEvent) {
         match event {
+            AgentEvent::StreamDelta(delta) => {
+                if let Some(idx) = self.streaming_message_idx {
+                    self.messages[idx].push_str(&delta);
+                } else {
+                    self.messages.push(format!("Assistant: {}", delta));
+                    self.streaming_message_idx = Some(self.messages.len() - 1);
+                }
+                self.follow_tail = true;
+            }
             AgentEvent::LlmText(text) => {
                 self.messages.push(format!(
                     "  \u{1f4ad} {}",
@@ -727,6 +738,7 @@ impl RatatuiUi {
                 self.follow_tail = true;
             }
             AgentEvent::ToolStart { name } => {
+                self.streaming_message_idx = None;
                 self.messages.push(format!("  \u{26a1} 调用 {} ...", name));
                 self.follow_tail = true;
             }
@@ -737,13 +749,18 @@ impl RatatuiUi {
                 self.follow_tail = true;
             }
             AgentEvent::Done(response) => {
-                self.messages.push(format!("Assistant: {}", response));
+                if self.streaming_message_idx.is_some() {
+                    self.streaming_message_idx = None;
+                } else if !response.is_empty() {
+                    self.messages.push(format!("Assistant: {}", response));
+                }
                 self.pet_state = PetState::Happy;
                 self.processing = false;
                 self.idle_ticks = 0;
                 self.follow_tail = true;
             }
             AgentEvent::Error(e) => {
+                self.streaming_message_idx = None;
                 self.messages.push(format!("Error: {}", e));
                 self.pet_state = PetState::Error;
                 self.processing = false;

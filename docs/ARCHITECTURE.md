@@ -105,6 +105,9 @@ flowchart TB
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     async fn chat_completion(&self, request: &ChatRequest) -> Result<ChatResponse>;
+    async fn chat_completion_stream(
+        &self, request: &ChatRequest, chunk_tx: mpsc::UnboundedSender<StreamChunk>,
+    ) -> Result<ChatResponse>;  // 默认回退到非流式
     fn name(&self) -> &str;
 }
 ```
@@ -122,11 +125,16 @@ pub trait LlmProvider: Send + Sync {
 
 **作用**：协调 LLM 与工具之间的多轮交互。
 
-**流程**：
+**流程**（使用流式 SSE 输出）：
 
 ```rust
 loop {
-    let response = llm.chat_completion(&request).await?;
+    let (chunk_tx, chunk_rx) = mpsc::unbounded_channel();
+    // 转发任务：将 StreamChunk → AgentEvent::StreamDelta 发送给 TUI
+    let forward = tokio::spawn(forward_chunks(chunk_rx, event_tx));
+
+    let response = llm.chat_completion_stream(&request, chunk_tx).await?;
+    forward.await;  // 等待所有 chunk 转发完毕
     stats.record_usage(&response.usage);
 
     if response.tool_calls.is_empty() {
@@ -231,7 +239,7 @@ show_pet = true
 - **ToolCall**：id + name + arguments
 - **ChatRequest / ChatResponse**：LLM 请求/响应（含 `usage: Option<TokenUsage>`）
 - **TokenUsage**：input_tokens + output_tokens
-- **StreamChunk**：流式响应增量块（已定义，尚未接入）
+- **StreamChunk**：流式响应增量块（`TextDelta` / `Done`），由 LLM Provider 通过 mpsc channel 发送
 
 **关键文件**：`src/types.rs`
 
@@ -274,13 +282,14 @@ miniclaw/
 ```
 用户输入 "读取 Cargo.toml"
   → ratatui_ui.rs 接收输入
-  → agent.rs 将输入加入消息历史，调用 LLM
-  → llm/anthropic.rs 将消息转为 API 格式，发送 HTTP 请求
-  → API 返回 tool_call: read_file(path="Cargo.toml") + token usage
+  → agent.rs 将输入加入消息历史，调用 LLM（流式 SSE）
+  → llm/*.rs 将消息转为 API 格式，发送 HTTP 请求（stream=true）
+  → SSE 流逐 token 返回：StreamChunk::TextDelta → AgentEvent::StreamDelta → TUI 实时渲染
+  → SSE 流中检测到 tool_call（增量累加 arguments）
   → agent.rs 记录 token 用量，检测到 tool_call，交给 ToolRouter
   → tools/mod.rs 按名称找到 read_file 工具并执行
   → tools/read_file.rs 读取文件内容
-  → agent.rs 将结果作为 tool message 加入历史，再次调用 LLM
-  → LLM 看到文件内容，生成最终文字回复
-  → ratatui_ui.rs 显示回复，StatsWidget 更新 token 计数
+  → agent.rs 将结果作为 tool message 加入历史，再次调用 LLM（流式 SSE）
+  → LLM 流式生成最终文字回复 → TUI 逐 token 渲染
+  → ratatui_ui.rs 渲染完成，StatsWidget 更新 token 计数
 ```
