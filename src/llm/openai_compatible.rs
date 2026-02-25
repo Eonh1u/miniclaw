@@ -1,30 +1,12 @@
 //! OpenAI-compatible LLM provider implementation.
-//!
-//! This provider works with any API that follows the OpenAI Chat Completions format,
-//! including:
-//! - OpenAI (GPT-4, etc.)
-//! - Qwen (通义千问) via DashScope
-//! - DeepSeek
-//! - Moonshot (Kimi)
-//! - Local models via Ollama, vLLM, etc.
-//!
-//! Key concepts:
-//! - **OpenAI Chat Completions API**: the de facto standard format that most
-//!   LLM providers have adopted for compatibility
-//!   POST {api_base}/chat/completions
-//! - **api_base**: the base URL can be swapped to point at any compatible endpoint
-//! - **Tool calling**: uses OpenAI's "tools" format with "function" type
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::LlmProvider;
-use crate::types::{ChatRequest, ChatResponse, Role, ToolCall};
+use crate::types::{ChatRequest, ChatResponse, Role, ToolCall, TokenUsage};
 
-/// OpenAI-compatible API client.
-///
-/// Works with any provider that implements the OpenAI Chat Completions API format.
 pub struct OpenAiCompatibleProvider {
     api_key: String,
     api_base: String,
@@ -83,6 +65,7 @@ struct ApiToolCallFunction {
 #[derive(Deserialize, Debug)]
 struct ApiResponse {
     choices: Vec<ApiChoice>,
+    usage: Option<ApiUsage>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -97,6 +80,12 @@ struct ApiResponseMessage {
     tool_calls: Option<Vec<ApiToolCall>>,
 }
 
+#[derive(Deserialize, Debug)]
+struct ApiUsage {
+    prompt_tokens: Option<u64>,
+    completion_tokens: Option<u64>,
+}
+
 // --- Implementation ---
 
 impl OpenAiCompatibleProvider {
@@ -108,7 +97,6 @@ impl OpenAiCompatibleProvider {
         }
     }
 
-    /// Convert internal messages to OpenAI API format.
     fn build_api_request(&self, request: &ChatRequest) -> ApiRequest {
         let mut api_messages: Vec<ApiMessage> = Vec::new();
 
@@ -150,11 +138,7 @@ impl OpenAiCompatibleProvider {
                     };
                     api_messages.push(ApiMessage {
                         role: "assistant".to_string(),
-                        content: if msg.content.is_empty() {
-                            None
-                        } else {
-                            Some(msg.content.clone())
-                        },
+                        content: if msg.content.is_empty() { None } else { Some(msg.content.clone()) },
                         tool_calls,
                         tool_call_id: None,
                     });
@@ -191,7 +175,6 @@ impl OpenAiCompatibleProvider {
         }
     }
 
-    /// Parse API response into internal ChatResponse.
     fn parse_response(&self, api_response: ApiResponse) -> Result<ChatResponse> {
         let choice = api_response
             .choices
@@ -200,7 +183,6 @@ impl OpenAiCompatibleProvider {
             .context("Empty response from API: no choices returned")?;
 
         let content = choice.message.content.unwrap_or_default();
-
         let tool_calls = choice
             .message
             .tool_calls
@@ -213,10 +195,12 @@ impl OpenAiCompatibleProvider {
             })
             .collect();
 
-        Ok(ChatResponse {
-            content,
-            tool_calls,
-        })
+        let usage = api_response.usage.map(|u| TokenUsage {
+            input_tokens: u.prompt_tokens.unwrap_or(0),
+            output_tokens: u.completion_tokens.unwrap_or(0),
+        });
+
+        Ok(ChatResponse { content, tool_calls, usage })
     }
 }
 
@@ -224,10 +208,7 @@ impl OpenAiCompatibleProvider {
 impl LlmProvider for OpenAiCompatibleProvider {
     async fn chat_completion(&self, request: &ChatRequest) -> Result<ChatResponse> {
         let api_request = self.build_api_request(request);
-        let url = format!(
-            "{}/chat/completions",
-            self.api_base.trim_end_matches('/')
-        );
+        let url = format!("{}/chat/completions", self.api_base.trim_end_matches('/'));
 
         let response = self
             .client

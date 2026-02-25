@@ -1,51 +1,28 @@
 //! Configuration management for miniclaw.
-//!
-//! Loads settings from a TOML config file (~/.miniclaw/config.toml)
-//! and merges with environment variable overrides.
-//!
-//! Key concepts:
-//! - TOML format: a simple, readable config file format popular in Rust
-//! - Environment variables: override config values (especially for secrets like API keys)
-//! - Default values: sensible defaults so the tool works out of the box
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Top-level configuration structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub llm: LlmConfig,
     pub agent: AgentConfig,
     pub tools: ToolsConfig,
+    #[serde(default)]
+    pub ui: UiConfig,
 }
 
-/// LLM provider configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
-    /// Which provider to use: "anthropic" or "openai_compatible"
-    /// - "anthropic": Anthropic Messages API (Claude)
-    /// - "openai_compatible": Any OpenAI-compatible API (OpenAI, Qwen, DeepSeek, etc.)
     pub provider: String,
-    /// The model name (e.g. "claude-sonnet-4-20250514", "qwen-plus", "deepseek-chat")
     pub model: String,
-    /// Custom API base URL (optional, uses provider default if not set)
-    /// Examples:
-    ///   - Anthropic:  "https://api.anthropic.com"
-    ///   - OpenAI:     "https://api.openai.com/v1"
-    ///   - Qwen:       "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    ///   - DeepSeek:   "https://api.deepseek.com/v1"
-    ///   - Local:      "http://localhost:11434/v1"
     #[serde(default)]
     pub api_base: Option<String>,
-    /// API key value, can be set directly in config file
-    /// Priority: api_key > environment variable named by api_key_env
     #[serde(default)]
     pub api_key: Option<String>,
-    /// Environment variable name that holds the API key (fallback if api_key is not set)
     #[serde(default = "default_api_key_env")]
     pub api_key_env: String,
-    /// Maximum tokens for LLM responses
     pub max_tokens: u32,
 }
 
@@ -53,20 +30,39 @@ fn default_api_key_env() -> String {
     "LLM_API_KEY".to_string()
 }
 
-/// Agent behavior configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
-    /// Maximum number of tool-call iterations before stopping
     pub max_iterations: u32,
-    /// System prompt that defines the AI's behavior
     pub system_prompt: String,
 }
 
-/// Tools configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolsConfig {
-    /// List of enabled tool names
     pub enabled: Vec<String>,
+}
+
+/// UI widget visibility configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiConfig {
+    /// Show the stats panel in the header (token counts, usage days).
+    #[serde(default = "bool_true")]
+    pub show_stats: bool,
+    /// Show the pet animation panel in the header.
+    #[serde(default = "bool_true")]
+    pub show_pet: bool,
+}
+
+fn bool_true() -> bool {
+    true
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            show_stats: true,
+            show_pet: true,
+        }
+    }
 }
 
 impl Default for AppConfig {
@@ -95,23 +91,17 @@ impl Default for AppConfig {
                     "exec_command".to_string(),
                 ],
             },
+            ui: UiConfig::default(),
         }
     }
 }
 
 impl AppConfig {
-    /// Get the path to the config file: ~/.miniclaw/config.toml
     pub fn config_path() -> Result<PathBuf> {
         let home = dirs::home_dir().context("Could not determine home directory")?;
         Ok(home.join(".miniclaw").join("config.toml"))
     }
 
-    /// Load config from file, falling back to defaults.
-    ///
-    /// Priority:
-    /// 1. Config file (~/.miniclaw/config.toml) if it exists
-    /// 2. Default values
-    /// 3. Environment variable overrides (for API key)
     pub fn load() -> Result<Self> {
         let config_path = Self::config_path()?;
 
@@ -124,7 +114,6 @@ impl AppConfig {
             Self::default()
         };
 
-        // Environment variable overrides
         if let Ok(provider) = std::env::var("MINICLAW_PROVIDER") {
             config.llm.provider = provider;
         }
@@ -138,20 +127,12 @@ impl AppConfig {
         Ok(config)
     }
 
-    /// Resolve the API key.
-    ///
-    /// Priority:
-    /// 1. api_key field in config file (直接写在配置文件里)
-    /// 2. Environment variable named by api_key_env (默认 LLM_API_KEY)
     pub fn api_key(&self) -> Result<String> {
-        // 1. Check config file value first
         if let Some(key) = &self.llm.api_key {
             if !key.is_empty() {
                 return Ok(key.clone());
             }
         }
-
-        // 2. Fall back to environment variable
         std::env::var(&self.llm.api_key_env).with_context(|| {
             format!(
                 "API key not found. Either:\n  \
@@ -163,7 +144,6 @@ impl AppConfig {
         })
     }
 
-    /// Save the default config to ~/.miniclaw/config.toml (for first-time setup).
     pub fn save_default() -> Result<PathBuf> {
         let config_path = Self::config_path()?;
         if let Some(parent) = config_path.parent() {

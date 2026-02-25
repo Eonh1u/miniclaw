@@ -1,25 +1,12 @@
 //! Anthropic (Claude) LLM provider implementation.
-//!
-//! This module implements the `LlmProvider` trait for the Anthropic Messages API.
-//!
-//! Key concepts:
-//! - **Messages API**: Anthropic's chat completion endpoint
-//!   POST https://api.anthropic.com/v1/messages
-//! - **Request format**: Anthropic uses a different format than OpenAI:
-//!   - system prompt is a top-level field, not a message
-//!   - tool definitions use "input_schema" instead of "parameters"
-//!   - tool results are sent as user messages with "tool_result" content blocks
-//! - **Response format**: content is an array of "content blocks" which can be
-//!   text or tool_use blocks
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::LlmProvider;
-use crate::types::{ChatRequest, ChatResponse, Role, ToolCall};
+use crate::types::{ChatRequest, ChatResponse, Role, ToolCall, TokenUsage};
 
-/// Anthropic API client.
 pub struct AnthropicProvider {
     api_key: String,
     api_base: String,
@@ -27,7 +14,6 @@ pub struct AnthropicProvider {
 }
 
 // --- API Request Types ---
-// These match the Anthropic Messages API format
 
 #[derive(Serialize)]
 struct ApiRequest {
@@ -46,7 +32,6 @@ struct ApiMessage {
     content: ApiContent,
 }
 
-/// Content can be a simple string or an array of content blocks.
 #[derive(Serialize)]
 #[serde(untagged)]
 enum ApiContent {
@@ -86,6 +71,13 @@ struct ApiResponse {
     content: Vec<ContentBlock>,
     #[allow(dead_code)]
     stop_reason: Option<String>,
+    usage: Option<ApiUsage>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ApiUsage {
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
 }
 
 // --- Implementation ---
@@ -99,12 +91,6 @@ impl AnthropicProvider {
         }
     }
 
-    /// Convert our internal messages to Anthropic API format.
-    ///
-    /// Key differences from OpenAI:
-    /// - System messages are extracted to a top-level field
-    /// - Tool results are sent as user messages with tool_result content blocks
-    /// - Assistant messages with tool calls use tool_use content blocks
     fn build_api_request(&self, request: &ChatRequest) -> ApiRequest {
         let mut system = None;
         let mut api_messages: Vec<ApiMessage> = Vec::new();
@@ -127,12 +113,9 @@ impl AnthropicProvider {
                             content: ApiContent::Text(msg.content.clone()),
                         });
                     } else {
-                        // Assistant message with tool calls -> content blocks
                         let mut blocks = Vec::new();
                         if !msg.content.is_empty() {
-                            blocks.push(ContentBlock::Text {
-                                text: msg.content.clone(),
-                            });
+                            blocks.push(ContentBlock::Text { text: msg.content.clone() });
                         }
                         for tc in &msg.tool_calls {
                             let input: serde_json::Value =
@@ -150,7 +133,6 @@ impl AnthropicProvider {
                     }
                 }
                 Role::Tool => {
-                    // Tool results are sent as user messages in Anthropic's format
                     let block = ContentBlock::ToolResult {
                         tool_use_id: msg.tool_call_id.clone().unwrap_or_default(),
                         content: msg.content.clone(),
@@ -182,16 +164,13 @@ impl AnthropicProvider {
         }
     }
 
-    /// Parse the API response into our internal ChatResponse.
     fn parse_response(&self, api_response: ApiResponse) -> ChatResponse {
         let mut content = String::new();
         let mut tool_calls = Vec::new();
 
         for block in api_response.content {
             match block {
-                ContentBlock::Text { text } => {
-                    content.push_str(&text);
-                }
+                ContentBlock::Text { text } => content.push_str(&text),
                 ContentBlock::ToolUse { id, name, input } => {
                     tool_calls.push(ToolCall {
                         id,
@@ -199,16 +178,16 @@ impl AnthropicProvider {
                         arguments: serde_json::to_string(&input).unwrap_or_default(),
                     });
                 }
-                ContentBlock::ToolResult { .. } => {
-                    // Shouldn't appear in responses, skip
-                }
+                ContentBlock::ToolResult { .. } => {}
             }
         }
 
-        ChatResponse {
-            content,
-            tool_calls,
-        }
+        let usage = api_response.usage.map(|u| TokenUsage {
+            input_tokens: u.input_tokens.unwrap_or(0),
+            output_tokens: u.output_tokens.unwrap_or(0),
+        });
+
+        ChatResponse { content, tool_calls, usage }
     }
 }
 
@@ -216,8 +195,8 @@ impl AnthropicProvider {
 impl LlmProvider for AnthropicProvider {
     async fn chat_completion(&self, request: &ChatRequest) -> Result<ChatResponse> {
         let api_request = self.build_api_request(request);
-
         let url = format!("{}/v1/messages", self.api_base.trim_end_matches('/'));
+
         let response = self
             .client
             .post(&url)
@@ -232,11 +211,7 @@ impl LlmProvider for AnthropicProvider {
         let status = response.status();
         if !status.is_success() {
             let error_body = response.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "Anthropic API error ({}): {}",
-                status,
-                error_body
-            );
+            anyhow::bail!("Anthropic API error ({}): {}", status, error_body);
         }
 
         let api_response: ApiResponse = response
