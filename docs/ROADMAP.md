@@ -32,7 +32,8 @@ miniclaw/
     ├── config.rs             # 配置管理（TOML + 环境变量）
     ├── rules.rs              # CLAUDE.md 规则文件发现与加载
     ├── types.rs              # 核心数据类型（Message, ToolCall, TokenUsage 等）
-    ├── agent.rs              # Agent Loop 核心循环 + SessionStats
+    ├── agent.rs              # Agent Loop 核心循环 + SessionStats + Agent::create()
+    ├── session.rs            # 会话持久化（保存/加载/导入/导出 JSON）
     ├── llm/
     │   ├── mod.rs            # LlmProvider trait
     │   ├── anthropic.rs      # Anthropic Claude 实现
@@ -45,7 +46,7 @@ miniclaw/
     └── ui/
         ├── mod.rs            # HeaderWidget trait + WidgetContext
         ├── markdown.rs       # Markdown → ratatui 富文本转换
-        └── ratatui_ui.rs     # Ratatui TUI 实现（StatsWidget, PetWidget）
+        └── ratatui_ui.rs     # Ratatui TUI 实现（多会话标签页, StatsWidget, PetWidget）
 ```
 
 ---
@@ -113,7 +114,9 @@ miniclaw/
 - [x] 工具调用实时进度显示（`⚡ 调用 xxx ...` / `✓ xxx 完成`，基于 AgentEvent + tokio::spawn 异步架构）
 - [x] 流式输出（Streaming/SSE）—— `LlmProvider::chat_completion_stream` 方法 + SSE 解析
 - [x] TUI 中逐 token 流式渲染（`StreamDelta` 事件 + `streaming_message_idx` 增量拼接）
-- [ ] 对话历史持久化（退出后保留）
+- [x] 对话历史持久化（`/save`、`/load`、`/sessions` 命令，保存到 `~/.miniclaw/sessions/`）
+- [x] 会话导入/导出（`/export <path>`、`/import <path>` 命令，JSON 格式）
+- [x] 多会话标签页系统（`/new`、`/close`、`/rename` 命令，Ctrl+Left/Right 切换，鼠标点击切换）
 - [ ] 多行输入支持
 - [ ] 上下文窗口管理（token 限制截断/摘要）
 
@@ -123,7 +126,7 @@ miniclaw/
 - [ ] 错误处理完善（网络超时重试、优雅降级）
 - [ ] 插件系统（外部工具动态加载）
 - [ ] MCP（Model Context Protocol）支持
-- [ ] 会话导出/导入
+- [x] 会话导出/导入（已在阶段 6 实现）
 
 ---
 
@@ -192,6 +195,7 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-26 | 多会话标签页 + 对话持久化：新增 `src/session.rs` 模块（JSON 持久化）；重构 TUI 为 `SessionTab` 多会话架构；标签栏 UI（鼠标点击 + Ctrl+Left/Right 切换）；新增命令 `/new`、`/close`、`/rename`、`/save`、`/load`、`/sessions`、`/export`、`/import`；`Agent::create()` 工厂方法；4 个新单元测试（共 35 个） |
 | 2026-02-26 | 工具调用进度优化：`AgentEvent::ToolStart/ToolEnd` 增加 `arguments` 字段；进度显示具体文件路径（如「⚡ 读取文件 src/main.rs ...」）；完成后原地覆盖替换进行中消息（非追加新行）；颜色区分：黄色=进行中、青色=完成、红色=失败 |
 | 2026-02-26 | CI 修复：修正 `src/ui/ratatui_ui.rs` 格式问题使 `cargo fmt --check` 通过，GitHub Actions CI 全部步骤（fmt、clippy、build、test）执行成功 |
 | 2026-02-25 | 流式输出（Streaming/SSE）：`LlmProvider` trait 新增 `chat_completion_stream` 方法（含默认非流式回退）；OpenAI 兼容 API 和 Anthropic API 分别实现 SSE 流式解析（文本 delta + 工具调用 delta 累加）；Agent 通过 `tokio::spawn` 转发 `StreamChunk` 为 `AgentEvent::StreamDelta`；TUI 新增 `streaming_message_idx` 跟踪实现逐 token 增量渲染 |
