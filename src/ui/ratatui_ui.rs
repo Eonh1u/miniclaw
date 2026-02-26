@@ -732,7 +732,7 @@ impl SessionTab {
                     self.streaming_message_idx = Some(self.messages.len() - 1);
                 }
                 if self.follow_tail {
-                    self.scroll_offset = usize::MAX;
+                    self.scroll_offset = usize::MAX / 2;
                 }
             }
             AgentEvent::LlmText(text) => {
@@ -1905,7 +1905,7 @@ impl RatatuiUi {
                             }
                             KeyCode::PageDown => {
                                 let tab = self.active_mut();
-                                tab.scroll_offset += 10;
+                                tab.scroll_offset = tab.scroll_offset.saturating_add(10);
                             }
                             _ => {
                                 self.handle_key_event(key);
@@ -1939,7 +1939,8 @@ impl RatatuiUi {
                             self.active_mut().scroll_offset = off.saturating_sub(3);
                         }
                         MouseEventKind::ScrollDown => {
-                            self.active_mut().scroll_offset += 3;
+                            self.active_mut().scroll_offset =
+                                self.active().scroll_offset.saturating_add(3);
                         }
                         _ => {}
                     },
