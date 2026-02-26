@@ -192,6 +192,7 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-26 | 工具调用进度优化：`AgentEvent::ToolStart/ToolEnd` 增加 `arguments` 字段；进度显示具体文件路径（如「⚡ 读取文件 src/main.rs ...」）；完成后原地覆盖替换进行中消息（非追加新行）；颜色区分：黄色=进行中、青色=完成、红色=失败 |
 | 2026-02-26 | CI 修复：修正 `src/ui/ratatui_ui.rs` 格式问题使 `cargo fmt --check` 通过，GitHub Actions CI 全部步骤（fmt、clippy、build、test）执行成功 |
 | 2026-02-25 | 流式输出（Streaming/SSE）：`LlmProvider` trait 新增 `chat_completion_stream` 方法（含默认非流式回退）；OpenAI 兼容 API 和 Anthropic API 分别实现 SSE 流式解析（文本 delta + 工具调用 delta 累加）；Agent 通过 `tokio::spawn` 转发 `StreamChunk` 为 `AgentEvent::StreamDelta`；TUI 新增 `streaming_message_idx` 跟踪实现逐 token 增量渲染 |
 | 2026-02-25 | Markdown 渲染 + 工具调用进度显示：新增 `src/ui/markdown.rs` 模块（pulldown-cmark 解析）；引入 `AgentEvent` 枚举 + mpsc channel 实时推送工具调用事件；TUI 异步架构改造（tokio::spawn + Option&lt;Agent&gt;）；WidgetContext 解耦（stats 独立于 Agent）；新增 9 个 Markdown 单元测试 |
