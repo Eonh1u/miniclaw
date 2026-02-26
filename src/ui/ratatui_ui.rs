@@ -1172,7 +1172,7 @@ impl RatatuiUi {
         } else {
             String::new()
         };
-        let title = format!("Input (Shift+Enter newline){}", pending_hint);
+        let title = format!("Input (Ctrl+J newline){}", pending_hint);
 
         let p = Paragraph::new(tab.input.as_str())
             .block(Block::default().borders(Borders::ALL).title(title))
@@ -1533,7 +1533,9 @@ impl RatatuiUi {
                     "  /pet               Toggle pet panel",
                     "  /quit              Exit the program",
                     "",
+                    "  Ctrl+J / Alt+Enter Multi-line input (newline)",
                     "  Ctrl+Left/Right    Switch session tabs",
+                    "  PageUp/PageDown    Scroll conversation",
                     "  Ctrl+C             Exit the program",
                 ];
                 for line in help {
@@ -1698,8 +1700,19 @@ impl RatatuiUi {
                             KeyCode::Tab if self.autocomplete.visible => {
                                 self.apply_autocomplete_selection();
                             }
-                            // Shift+Enter inserts newline
-                            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            // Shift+Enter or Alt+Enter inserts newline
+                            KeyCode::Enter
+                                if key.modifiers.contains(KeyModifiers::SHIFT)
+                                    || key.modifiers.contains(KeyModifiers::ALT) =>
+                            {
+                                let tab = self.active_mut();
+                                let b = tab.byte_index();
+                                tab.input.insert(b, '\n');
+                                tab.cursor_position += 1;
+                                self.autocomplete.dismiss();
+                            }
+                            // Ctrl+J also inserts newline (universal fallback)
+                            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 let tab = self.active_mut();
                                 let b = tab.byte_index();
                                 tab.input.insert(b, '\n');
