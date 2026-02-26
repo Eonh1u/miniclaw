@@ -119,7 +119,10 @@ miniclaw/
 - [x] 多会话标签页系统（`/new`、`/close`、`/rename` 命令，Ctrl+Left/Right 切换，鼠标点击切换）
 - [x] 分屏同时展示多会话（左右等分列布局，活动会话青色边框，鼠标点击切换焦点）
 - [x] 会话自动保存（每次用户输入/AI 输出/退出时自动持久化到 `~/.miniclaw/sessions/`）
-- [ ] 多行输入支持
+- [x] 多行输入支持（Ctrl+J / Alt+Enter / Shift+Enter 换行，Enter 发送，输入框自动扩展）
+- [x] 待发送消息队列（处理中仍可输入，消息排队按序发送）
+- [x] 每个会话独立输入框（切换会话保留各自的输入内容）
+- [x] 对话滚动改进（PageUp/PageDown 快速翻页，鼠标滚轮，修复 scroll_offset 同步）
 - [ ] 上下文窗口管理（token 限制截断/摘要）
 
 ### 阶段 7：高级功能 🔶 进行中
@@ -197,6 +200,7 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-26 | 输入体验升级：多行输入（Ctrl+J/Alt+Enter 换行）；待发送消息队列（处理中可排队）；每个会话独立输入框；对话滚动改进（PageUp/Down、鼠标滚轮、scroll_offset 同步修复） |
 | 2026-02-26 | 分屏展示 + 自动保存：多会话左右分屏同时展示（活动会话青色边框，鼠标点击切换焦点）；会话自动持久化（用户输入/AI 输出/退出时自动保存到 `~/.miniclaw/sessions/`，防止非正常退出丢失数据） |
 | 2026-02-26 | 多会话标签页 + 对话持久化：新增 `src/session.rs` 模块（JSON 持久化）；重构 TUI 为 `SessionTab` 多会话架构；标签栏 UI（鼠标点击 + Ctrl+Left/Right 切换）；新增命令 `/new`、`/close`、`/rename`、`/save`、`/load`、`/sessions`、`/export`、`/import`；`Agent::create()` 工厂方法；4 个新单元测试（共 35 个） |
 | 2026-02-26 | 工具调用进度优化：`AgentEvent::ToolStart/ToolEnd` 增加 `arguments` 字段；进度显示具体文件路径（如「⚡ 读取文件 src/main.rs ...」）；完成后原地覆盖替换进行中消息（非追加新行）；颜色区分：黄色=进行中、青色=完成、红色=失败 |
