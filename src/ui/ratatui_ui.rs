@@ -176,11 +176,7 @@ impl SlashAutocomplete {
 struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            crossterm::event::DisableMouseCapture,
-            crossterm::event::PopKeyboardEnhancementFlags
-        );
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
         ratatui::restore();
     }
 }
@@ -637,6 +633,8 @@ struct SessionTab {
     input: String,
     cursor_position: usize,
     pending_messages: VecDeque<String>,
+    user_message_count: u32,
+    title_task: Option<tokio::task::JoinHandle<Option<String>>>,
 }
 
 impl SessionTab {
@@ -659,6 +657,8 @@ impl SessionTab {
             input: String::new(),
             cursor_position: 0,
             pending_messages: VecDeque::new(),
+            user_message_count: 0,
+            title_task: None,
         }
     }
 
@@ -898,6 +898,60 @@ impl RatatuiUi {
     fn active_mut(&mut self) -> &mut SessionTab {
         let idx = self.active_tab.min(self.tabs.len() - 1);
         &mut self.tabs[idx]
+    }
+
+    fn request_title_update(&mut self, tab_idx: usize) {
+        if tab_idx >= self.tabs.len() {
+            return;
+        }
+        let tab = &self.tabs[tab_idx];
+        let recent_msgs: Vec<String> = tab
+            .messages
+            .iter()
+            .filter(|m| m.starts_with("You: ") || m.starts_with("Assistant: "))
+            .take(6)
+            .cloned()
+            .collect();
+        if recent_msgs.is_empty() {
+            return;
+        }
+        let summary_input: String = recent_msgs
+            .iter()
+            .map(|m| {
+                let content = m
+                    .strip_prefix("You: ")
+                    .or_else(|| m.strip_prefix("Assistant: "))
+                    .unwrap_or(m);
+                content.chars().take(100).collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = self.config.clone();
+        let project_root = self.project_root.clone();
+        let handle = tokio::spawn(async move {
+            let agent_result = Agent::create(&config, &project_root);
+            let mut agent = match agent_result {
+                Ok(a) => a,
+                Err(_) => return None,
+            };
+            let prompt = format!(
+                "Based on the following conversation, generate a very short title (max 15 characters, in the conversation's language). \
+                 Reply with ONLY the title, nothing else.\n\n{}",
+                summary_input
+            );
+            match agent.process_message(&prompt, None).await {
+                Ok(title) => {
+                    let title = title.trim().trim_matches('"').trim().to_string();
+                    if title.len() <= 50 && !title.is_empty() {
+                        Some(title)
+                    } else {
+                        Some(title.chars().take(15).collect())
+                    }
+                }
+                Err(_) => None,
+            }
+        });
+        self.tabs[tab_idx].title_task = Some(handle);
     }
 
     fn create_new_tab(&mut self, name: Option<String>) -> Result<()> {
@@ -1574,9 +1628,10 @@ impl RatatuiUi {
                     "  /pet               Toggle pet panel",
                     "  /quit              Exit the program",
                     "",
-                    "  Shift+Enter        Multi-line input (newline)",
+                    "  Alt+N              Insert newline (multi-line input)",
                     "  Ctrl+Left/Right    Switch session tabs",
                     "  PageUp/PageDown    Scroll conversation",
+                    "  Shift+mouse drag   Select and copy text",
                     "  Ctrl+C             Exit the program",
                 ];
                 for line in help {
@@ -1648,13 +1703,7 @@ impl RatatuiUi {
             let _ = event::read()?;
         }
 
-        crossterm::execute!(
-            std::io::stdout(),
-            crossterm::event::EnableMouseCapture,
-            crossterm::event::PushKeyboardEnhancementFlags(
-                crossterm::event::KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
-            )
-        )?;
+        crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)?;
 
         let mut terminal = ratatui::init();
         let _guard = TerminalGuard;
@@ -1747,19 +1796,19 @@ impl RatatuiUi {
                             KeyCode::Tab if self.autocomplete.visible => {
                                 self.apply_autocomplete_selection();
                             }
-                            // Shift+Enter or Alt+Enter inserts newline
-                            KeyCode::Enter
-                                if key.modifiers.contains(KeyModifiers::SHIFT)
-                                    || key.modifiers.contains(KeyModifiers::ALT) =>
-                            {
+                            // Alt+N inserts newline (works in all terminals)
+                            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::ALT) => {
                                 let tab = self.active_mut();
                                 let b = tab.byte_index();
                                 tab.input.insert(b, '\n');
                                 tab.cursor_position += 1;
                                 self.autocomplete.dismiss();
                             }
-                            // Ctrl+J also inserts newline (universal fallback)
-                            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            // Shift+Enter / Alt+Enter / Ctrl+J as additional newline options
+                            KeyCode::Enter
+                                if key.modifiers.contains(KeyModifiers::SHIFT)
+                                    || key.modifiers.contains(KeyModifiers::ALT) =>
+                            {
                                 let tab = self.active_mut();
                                 let b = tab.byte_index();
                                 tab.input.insert(b, '\n');
@@ -1800,11 +1849,13 @@ impl RatatuiUi {
                                         continue;
                                     }
 
+                                    let active_idx = self.active_tab.min(self.tabs.len() - 1);
                                     let tab = self.active_mut();
                                     if tab.processing {
                                         tab.pending_messages.push_back(input_text);
                                     } else {
                                         tab.messages.push(format!("You: {}", input_text));
+                                        tab.user_message_count += 1;
                                         tab.processing = true;
                                         tab.pet_state = PetState::Thinking;
                                         tab.follow_tail = true;
@@ -1820,6 +1871,10 @@ impl RatatuiUi {
                                                     .await;
                                                 result.map(|_| moved_agent)
                                             }));
+                                        }
+                                        let count = self.tabs[active_idx].user_message_count;
+                                        if count == 1 || count == 5 {
+                                            self.request_title_update(active_idx);
                                         }
                                     }
                                 }
@@ -1877,12 +1932,29 @@ impl RatatuiUi {
                 self.typing_intensity = self.typing_intensity.saturating_sub(TYPING_DECAY_PER_TICK);
             }
 
+            // Poll title generation tasks for all tabs
+            for tab in &mut self.tabs {
+                if let Some(handle) = &mut tab.title_task {
+                    if handle.is_finished() {
+                        if let Some(task) = tab.title_task.take() {
+                            if let Ok(Some(title)) =
+                                tokio::runtime::Handle::current().block_on(task)
+                            {
+                                tab.name = title;
+                            }
+                        }
+                    }
+                }
+            }
+
             // Pet state machine for active tab
+            self.clamp_active_tab();
             {
                 let ti = self.typing_intensity;
                 let idle = self.idle_ticks;
-                let input_empty = self.tabs[self.active_tab].input.is_empty();
-                let tab = &mut self.tabs[self.active_tab];
+                let active_idx = self.active_tab.min(self.tabs.len().saturating_sub(1));
+                let input_empty = self.tabs[active_idx].input.is_empty();
+                let tab = &mut self.tabs[active_idx];
                 if !tab.processing {
                     if ti > TYPING_FAST_THRESHOLD {
                         tab.pet_state = PetState::TypingFast;
