@@ -23,12 +23,30 @@ struct SlashCommand {
 }
 
 const SLASH_COMMANDS: &[SlashCommand] = &[
-    SlashCommand { name: "/help",  description: "Show available commands" },
-    SlashCommand { name: "/clear", description: "Clear conversation history" },
-    SlashCommand { name: "/stats", description: "Toggle stats panel" },
-    SlashCommand { name: "/pet",   description: "Toggle pet panel" },
-    SlashCommand { name: "/quit",  description: "Exit the program" },
-    SlashCommand { name: "/exit",  description: "Exit the program" },
+    SlashCommand {
+        name: "/help",
+        description: "Show available commands",
+    },
+    SlashCommand {
+        name: "/clear",
+        description: "Clear conversation history",
+    },
+    SlashCommand {
+        name: "/stats",
+        description: "Toggle stats panel",
+    },
+    SlashCommand {
+        name: "/pet",
+        description: "Toggle pet panel",
+    },
+    SlashCommand {
+        name: "/quit",
+        description: "Exit the program",
+    },
+    SlashCommand {
+        name: "/exit",
+        description: "Exit the program",
+    },
 ];
 
 /// Check if input looks like a slash command (e.g. "/help", "/clear"),
@@ -135,80 +153,230 @@ impl PetState {
     fn frames(&self) -> &[ArtFrame] {
         match self {
             PetState::Idle => &[
-                &[r"   /\_/\  ", r"  ( o.o ) ", r"   > ^ <  ", r"  /|   |\ ", r"  (___)   "],
-                &[r"   /\_/\  ", r"  ( o.o ) ", r"   > ^ <  ", r"  /|   |\ ", r"   (___)  "],
-                &[r"   /\_/\  ", r"  ( -.- ) ", r"   > ^ <  ", r"  /|   |\ ", r"  (___)   "],
-                &[r"   /\_/\  ", r"  ( o.o ) ", r"   > ^ <  ", r"  /|   |\ ", r"   (___)  "],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( o.o ) ",
+                    r"   > ^ <  ",
+                    r"  /|   |\ ",
+                    r"  (___)   ",
+                ],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( o.o ) ",
+                    r"   > ^ <  ",
+                    r"  /|   |\ ",
+                    r"   (___)  ",
+                ],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( -.- ) ",
+                    r"   > ^ <  ",
+                    r"  /|   |\ ",
+                    r"  (___)   ",
+                ],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( o.o ) ",
+                    r"   > ^ <  ",
+                    r"  /|   |\ ",
+                    r"   (___)  ",
+                ],
             ],
             PetState::Typing => &[
-                &[r"   /\_/\  ", r"  ( o.o ) ", r"   >   <  ", r"   _[_]_  ", r"   click  "],
-                &[r"   /\_/\  ", r"  ( o.  ) ", r"   >   <  ", r"   _[_]_  ", r"   clack  "],
-                &[r"   /\_/\  ", r"  ( .o ) ", r"   >   <  ", r"   _[_]_  ", r"   click  "],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( o.o ) ",
+                    r"   >   <  ",
+                    r"   _[_]_  ",
+                    r"   click  ",
+                ],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( o.  ) ",
+                    r"   >   <  ",
+                    r"   _[_]_  ",
+                    r"   clack  ",
+                ],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( .o ) ",
+                    r"   >   <  ",
+                    r"   _[_]_  ",
+                    r"   click  ",
+                ],
             ],
             PetState::TypingFast => &[
-                &[r"   /\_/\  ", r"  ( O.O ) ", r"   >   <  ", r"  _[===]_ ", r"  *CLACK* "],
-                &[r"  ~/\_/\~ ", r"  ( O.O ) ", r"   >   <  ", r"  _[===]_ ", r"  *CLICK* "],
-                &[r"   /\_/\  ", r"  ( O.O ) ", r"   >   <  ", r"  _[===]_ ", r"  *CLACK* "],
-                &[r" ~/\_/\ ~ ", r"  ( O.O ) ", r"   >   <  ", r"  _[===]_ ", r"  *CLICK* "],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( O.O ) ",
+                    r"   >   <  ",
+                    r"  _[===]_ ",
+                    r"  *CLACK* ",
+                ],
+                &[
+                    r"  ~/\_/\~ ",
+                    r"  ( O.O ) ",
+                    r"   >   <  ",
+                    r"  _[===]_ ",
+                    r"  *CLICK* ",
+                ],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( O.O ) ",
+                    r"   >   <  ",
+                    r"  _[===]_ ",
+                    r"  *CLACK* ",
+                ],
+                &[
+                    r" ~/\_/\ ~ ",
+                    r"  ( O.O ) ",
+                    r"   >   <  ",
+                    r"  _[===]_ ",
+                    r"  *CLICK* ",
+                ],
             ],
             PetState::Thinking => &[
-                &[r"   /\_/\  ", r"  ( o.O ) ", r"   > ~ <  ", r"  /|   |\ ", r"    ...   "],
-                &[r"   /\_/\  ", r"  ( O.o ) ", r"   > ~ <  ", r"  /|   |\ ", r"   ...    "],
-                &[r"   /\_/\  ", r"  ( o.o ) ", r"   > ? <  ", r"  /|   |\ ", r"     ..   "],
-                &[r"   /\_/\  ", r"  ( O.O ) ", r"   > ~ <  ", r"  /|   |\ ", r"  . . .   "],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( o.O ) ",
+                    r"   > ~ <  ",
+                    r"  /|   |\ ",
+                    r"    ...   ",
+                ],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( O.o ) ",
+                    r"   > ~ <  ",
+                    r"  /|   |\ ",
+                    r"   ...    ",
+                ],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( o.o ) ",
+                    r"   > ? <  ",
+                    r"  /|   |\ ",
+                    r"     ..   ",
+                ],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( O.O ) ",
+                    r"   > ~ <  ",
+                    r"  /|   |\ ",
+                    r"  . . .   ",
+                ],
             ],
             PetState::Happy => &[
-                &[r"   /\_/\  ", r"  ( ^.^ ) ", r"   > v <  ", r"  /|   |\ ", r"  * ~ * ~ "],
-                &[r"  ~/\_/\  ", r"  ( ^o^ ) ", r"   > v <  ", r"  /|   |\ ", r"  ~ * ~ * "],
-                &[r"   /\_/\~ ", r"  ( ^.^ ) ", r"   > v <  ", r"  /|   |\ ", r"  * * ~ ~ "],
-                &[r"  ~/\_/\  ", r"  ( ^o^ ) ", r"   > v <  ", r"  /|   |\ ", r"  ~ ~ * * "],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( ^.^ ) ",
+                    r"   > v <  ",
+                    r"  /|   |\ ",
+                    r"  * ~ * ~ ",
+                ],
+                &[
+                    r"  ~/\_/\  ",
+                    r"  ( ^o^ ) ",
+                    r"   > v <  ",
+                    r"  /|   |\ ",
+                    r"  ~ * ~ * ",
+                ],
+                &[
+                    r"   /\_/\~ ",
+                    r"  ( ^.^ ) ",
+                    r"   > v <  ",
+                    r"  /|   |\ ",
+                    r"  * * ~ ~ ",
+                ],
+                &[
+                    r"  ~/\_/\  ",
+                    r"  ( ^o^ ) ",
+                    r"   > v <  ",
+                    r"  /|   |\ ",
+                    r"  ~ ~ * * ",
+                ],
             ],
             PetState::Error => &[
-                &[r"   /\_/\  ", r"  ( T.T ) ", r"   > _ <  ", r"  /|   |\ ", r"   ...    "],
-                &[r"   /\_/\  ", r"  ( ;.; ) ", r"   > _ <  ", r"  /|   |\ ", r"    ...   "],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( T.T ) ",
+                    r"   > _ <  ",
+                    r"  /|   |\ ",
+                    r"   ...    ",
+                ],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( ;.; ) ",
+                    r"   > _ <  ",
+                    r"  /|   |\ ",
+                    r"    ...   ",
+                ],
             ],
             PetState::Sleeping => &[
-                &[r"   /\_/\  ", r"  ( -.- ) ", r"   > z <  ", r"  /|   |\ ", r"      z   "],
-                &[r"   /\_/\  ", r"  ( -.- ) ", r"   > z <  ", r"  /|   |\ ", r"     zZ   "],
-                &[r"   /\_/\  ", r"  ( -.- ) ", r"   > z <  ", r"  /|   |\ ", r"    zZz   "],
-                &[r"   /\_/\  ", r"  ( -.- ) ", r"   > z <  ", r"  /|   |\ ", r"   zZzZ   "],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( -.- ) ",
+                    r"   > z <  ",
+                    r"  /|   |\ ",
+                    r"      z   ",
+                ],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( -.- ) ",
+                    r"   > z <  ",
+                    r"  /|   |\ ",
+                    r"     zZ   ",
+                ],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( -.- ) ",
+                    r"   > z <  ",
+                    r"  /|   |\ ",
+                    r"    zZz   ",
+                ],
+                &[
+                    r"   /\_/\  ",
+                    r"  ( -.- ) ",
+                    r"   > z <  ",
+                    r"  /|   |\ ",
+                    r"   zZzZ   ",
+                ],
             ],
         }
     }
 
     fn ticks_per_frame(&self) -> u32 {
         match self {
-            PetState::Idle       => 8,
-            PetState::Typing     => 4,
+            PetState::Idle => 8,
+            PetState::Typing => 4,
             PetState::TypingFast => 2,
-            PetState::Thinking   => 5,
-            PetState::Happy      => 3,
-            PetState::Error      => 6,
-            PetState::Sleeping   => 10,
+            PetState::Thinking => 5,
+            PetState::Happy => 3,
+            PetState::Error => 6,
+            PetState::Sleeping => 10,
         }
     }
 
     fn label(&self) -> &str {
         match self {
-            PetState::Idle       => "Idle",
-            PetState::Typing     => "Watching...",
+            PetState::Idle => "Idle",
+            PetState::Typing => "Watching...",
             PetState::TypingFast => "Excited!!",
-            PetState::Thinking   => "Thinking...",
-            PetState::Happy      => "Happy!",
-            PetState::Error      => "Oh no...",
-            PetState::Sleeping   => "zzZ...",
+            PetState::Thinking => "Thinking...",
+            PetState::Happy => "Happy!",
+            PetState::Error => "Oh no...",
+            PetState::Sleeping => "zzZ...",
         }
     }
 
     fn color(&self) -> Color {
         match self {
-            PetState::Idle       => Color::White,
-            PetState::Typing     => Color::Cyan,
+            PetState::Idle => Color::White,
+            PetState::Typing => Color::Cyan,
             PetState::TypingFast => Color::Magenta,
-            PetState::Thinking   => Color::Yellow,
-            PetState::Happy      => Color::Green,
-            PetState::Error      => Color::Red,
-            PetState::Sleeping   => Color::DarkGray,
+            PetState::Thinking => Color::Yellow,
+            PetState::Happy => Color::Green,
+            PetState::Error => Color::Red,
+            PetState::Sleeping => Color::DarkGray,
         }
     }
 
@@ -225,8 +393,12 @@ impl PetState {
 pub struct StatsWidget;
 
 impl HeaderWidget for StatsWidget {
-    fn id(&self) -> &str { "stats" }
-    fn preferred_width(&self) -> Option<u16> { None } // fill remaining
+    fn id(&self) -> &str {
+        "stats"
+    }
+    fn preferred_width(&self) -> Option<u16> {
+        None
+    } // fill remaining
 
     fn render(&self, f: &mut Frame, area: ratatui::layout::Rect, ctx: &WidgetContext) {
         let stats = ctx.stats;
@@ -234,12 +406,18 @@ impl HeaderWidget for StatsWidget {
         let status_line = if ctx.processing {
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled(" PROCESSING ", Style::default().bg(Color::Yellow).fg(Color::Black)),
+                Span::styled(
+                    " PROCESSING ",
+                    Style::default().bg(Color::Yellow).fg(Color::Black),
+                ),
             ])
         } else {
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled(" READY ", Style::default().bg(Color::Green).fg(Color::Black)),
+                Span::styled(
+                    " READY ",
+                    Style::default().bg(Color::Green).fg(Color::Black),
+                ),
             ])
         };
 
@@ -253,18 +431,35 @@ impl HeaderWidget for StatsWidget {
             Line::from(""),
             Line::from(vec![
                 Span::styled("  In: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format_token_count(stats.total_input_tokens), Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format_token_count(stats.total_input_tokens),
+                    Style::default().fg(Color::Cyan),
+                ),
                 Span::styled("  Out: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format_token_count(stats.total_output_tokens), Style::default().fg(Color::Magenta)),
+                Span::styled(
+                    format_token_count(stats.total_output_tokens),
+                    Style::default().fg(Color::Magenta),
+                ),
             ]),
             Line::from(vec![
                 Span::styled("  Requests: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{}", stats.request_count), Style::default().fg(Color::White)),
+                Span::styled(
+                    format!("{}", stats.request_count),
+                    Style::default().fg(Color::White),
+                ),
                 Span::styled("  Day: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{}", usage_days), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{}", usage_days),
+                    Style::default().fg(Color::Yellow),
+                ),
             ]),
             Line::from(""),
-            Line::from(Span::styled("  Shortcuts", Style::default().fg(Color::DarkGray).add_modifier(Modifier::UNDERLINED))),
+            Line::from(Span::styled(
+                "  Shortcuts",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::UNDERLINED),
+            )),
             Line::from(vec![
                 Span::styled("  Enter ", Style::default().fg(Color::Cyan)),
                 Span::styled("submit  ", Style::default().fg(Color::DarkGray)),
@@ -287,8 +482,12 @@ impl HeaderWidget for StatsWidget {
 pub struct PetWidget;
 
 impl HeaderWidget for PetWidget {
-    fn id(&self) -> &str { "pet" }
-    fn preferred_width(&self) -> Option<u16> { Some(20) }
+    fn id(&self) -> &str {
+        "pet"
+    }
+    fn preferred_width(&self) -> Option<u16> {
+        Some(20)
+    }
 
     fn render(&self, f: &mut Frame, area: ratatui::layout::Rect, ctx: &WidgetContext) {
         let state = &ctx.pet_state;
@@ -297,7 +496,10 @@ impl HeaderWidget for PetWidget {
 
         let mut lines: Vec<Line> = Vec::new();
         for art_line in frame {
-            lines.push(Line::from(Span::styled(*art_line, Style::default().fg(art_color))));
+            lines.push(Line::from(Span::styled(
+                *art_line,
+                Style::default().fg(art_color),
+            )));
         }
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -406,7 +608,9 @@ impl RatatuiUi {
         Self {
             input: String::new(),
             cursor_position: 0,
-            messages: vec!["Welcome to miniclaw! Type your message or /help for commands.".to_string()],
+            messages: vec![
+                "Welcome to miniclaw! Type your message or /help for commands.".to_string(),
+            ],
             scroll_offset: 0,
             follow_tail: true,
             processing: false,
@@ -440,7 +644,10 @@ impl RatatuiUi {
     // --- UTF-8 safe cursor helpers ---
 
     fn byte_index(&self) -> usize {
-        self.input.char_indices().nth(self.cursor_position).map_or(self.input.len(), |(i, _)| i)
+        self.input
+            .char_indices()
+            .nth(self.cursor_position)
+            .map_or(self.input.len(), |(i, _)| i)
     }
 
     fn char_count(&self) -> usize {
@@ -448,7 +655,9 @@ impl RatatuiUi {
     }
 
     fn cursor_display_width(&self) -> u16 {
-        self.input.chars().take(self.cursor_position)
+        self.input
+            .chars()
+            .take(self.cursor_position)
             .map(|c| if c.is_ascii() { 1u16 } else { 2u16 })
             .sum()
     }
@@ -458,8 +667,14 @@ impl RatatuiUi {
             KeyCode::Char(c) => {
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     match c {
-                        'u' => { self.input.clear(); self.cursor_position = 0; }
-                        'k' => { let b = self.byte_index(); self.input.drain(b..); }
+                        'u' => {
+                            self.input.clear();
+                            self.cursor_position = 0;
+                        }
+                        'k' => {
+                            let b = self.byte_index();
+                            self.input.drain(b..);
+                        }
                         'w' => {
                             let end = self.byte_index();
                             self.move_cursor_start_of_word();
@@ -487,10 +702,22 @@ impl RatatuiUi {
                     self.input.remove(b);
                 }
             }
-            KeyCode::Left  => { if self.cursor_position > 0 { self.cursor_position -= 1; } }
-            KeyCode::Right => { if self.cursor_position < self.char_count() { self.cursor_position += 1; } }
-            KeyCode::Home  => { self.cursor_position = 0; }
-            KeyCode::End   => { self.cursor_position = self.char_count(); }
+            KeyCode::Left => {
+                if self.cursor_position > 0 {
+                    self.cursor_position -= 1;
+                }
+            }
+            KeyCode::Right => {
+                if self.cursor_position < self.char_count() {
+                    self.cursor_position += 1;
+                }
+            }
+            KeyCode::Home => {
+                self.cursor_position = 0;
+            }
+            KeyCode::End => {
+                self.cursor_position = self.char_count();
+            }
             _ => {}
         }
         self.autocomplete.update_filter(&self.input);
@@ -526,7 +753,9 @@ impl RatatuiUi {
             } else if let Some(rest) = msg.strip_prefix("Assistant: ") {
                 text_lines.push(Line::from(Span::styled(
                     "Assistant:".to_string(),
-                    Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Blue)
+                        .add_modifier(Modifier::BOLD),
                 )));
                 let md_lines = crate::ui::markdown::markdown_to_lines(rest);
                 text_lines.extend(md_lines);
@@ -539,13 +768,25 @@ impl RatatuiUi {
     }
 
     fn estimate_rendered_lines(lines: &[Line], wrap_width: usize) -> usize {
-        if wrap_width == 0 { return lines.len(); }
-        lines.iter().map(|line| {
-            let width: usize = line.spans.iter()
-                .map(|s| s.content.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum::<usize>())
-                .sum();
-            1usize.max((width + wrap_width - 1) / wrap_width)
-        }).sum()
+        if wrap_width == 0 {
+            return lines.len();
+        }
+        lines
+            .iter()
+            .map(|line| {
+                let width: usize = line
+                    .spans
+                    .iter()
+                    .map(|s| {
+                        s.content
+                            .chars()
+                            .map(|c| if c.is_ascii() { 1 } else { 2 })
+                            .sum::<usize>()
+                    })
+                    .sum();
+                1usize.max((width + wrap_width - 1) / wrap_width)
+            })
+            .sum()
     }
 
     fn render_conversation(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
@@ -559,7 +800,9 @@ impl RatatuiUi {
             self.scroll_offset = max_scroll;
         } else {
             self.scroll_offset = self.scroll_offset.min(max_scroll);
-            if self.scroll_offset >= max_scroll { self.follow_tail = true; }
+            if self.scroll_offset >= max_scroll {
+                self.follow_tail = true;
+            }
         }
 
         let p = Paragraph::new(text_lines)
@@ -570,9 +813,16 @@ impl RatatuiUi {
     }
 
     fn render_input(&self, f: &mut Frame, area: Rect) {
-        let input_text = if self.processing { "Processing... Please wait." } else { &self.input[..] };
-        let p = Paragraph::new(input_text)
-            .block(Block::default().borders(Borders::ALL).title("Input (Ctrl+C quit)"));
+        let input_text = if self.processing {
+            "Processing... Please wait."
+        } else {
+            &self.input[..]
+        };
+        let p = Paragraph::new(input_text).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Input (Ctrl+C quit)"),
+        );
         f.render_widget(p, area);
         if !self.processing {
             let col = self.cursor_display_width();
@@ -614,7 +864,14 @@ impl RatatuiUi {
                 Line::from(vec![
                     Span::styled(
                         format!(" {:<8}", cmd.name),
-                        Style::default().fg(fg_name).bg(bg).add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }),
+                        Style::default()
+                            .fg(fg_name)
+                            .bg(bg)
+                            .add_modifier(if is_selected {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            }),
                     ),
                     Span::styled(
                         format!(" {}", cmd.description),
@@ -634,7 +891,12 @@ impl RatatuiUi {
         f.render_widget(popup, popup_area);
     }
 
-    fn render_header(&self, f: &mut Frame, area: ratatui::layout::Rect, stats: &crate::agent::SessionStats) {
+    fn render_header(
+        &self,
+        f: &mut Frame,
+        area: ratatui::layout::Rect,
+        stats: &crate::agent::SessionStats,
+    ) {
         if self.header_widgets.is_empty() {
             return;
         }
@@ -650,12 +912,14 @@ impl RatatuiUi {
             first_use_date: self.first_use_date,
         };
 
-        let constraints: Vec<Constraint> = self.header_widgets.iter().map(|w| {
-            match w.preferred_width() {
+        let constraints: Vec<Constraint> = self
+            .header_widgets
+            .iter()
+            .map(|w| match w.preferred_width() {
                 Some(width) => Constraint::Length(width),
                 None => Constraint::Min(20),
-            }
-        }).collect();
+            })
+            .collect();
 
         let cols = Layout::horizontal(constraints).split(area);
 
@@ -669,12 +933,17 @@ impl RatatuiUi {
     fn draw_ui(&mut self, f: &mut Frame, stats: &crate::agent::SessionStats) {
         let area = f.area();
 
-        let header_h = if self.header_widgets.is_empty() { 0 } else { HEADER_HEIGHT };
+        let header_h = if self.header_widgets.is_empty() {
+            0
+        } else {
+            HEADER_HEIGHT
+        };
         let rows = Layout::vertical([
             Constraint::Length(header_h),
             Constraint::Min(4),
             Constraint::Length(3),
-        ]).split(area);
+        ])
+        .split(area);
 
         if header_h > 0 {
             self.render_header(f, rows[0], stats);
@@ -697,23 +966,38 @@ impl RatatuiUi {
             }
             "/stats" => {
                 let visible = self.toggle_widget("stats");
-                self.messages.push(format!("[Stats panel {}]", if visible { "enabled" } else { "disabled" }));
+                self.messages.push(format!(
+                    "[Stats panel {}]",
+                    if visible { "enabled" } else { "disabled" }
+                ));
             }
             "/pet" => {
                 let visible = self.toggle_widget("pet");
-                self.messages.push(format!("[Pet panel {}]", if visible { "enabled" } else { "disabled" }));
+                self.messages.push(format!(
+                    "[Pet panel {}]",
+                    if visible { "enabled" } else { "disabled" }
+                ));
             }
             "/help" => {
                 self.messages.push("--- Commands ---".to_string());
-                self.messages.push("  /help   - Show available commands".to_string());
-                self.messages.push("  /clear  - Clear conversation history".to_string());
-                self.messages.push("  /stats  - Toggle stats panel".to_string());
-                self.messages.push("  /pet    - Toggle pet panel".to_string());
-                self.messages.push("  /quit   - Exit the program".to_string());
-                self.messages.push("  Ctrl+C  - Exit the program".to_string());
+                self.messages
+                    .push("  /help   - Show available commands".to_string());
+                self.messages
+                    .push("  /clear  - Clear conversation history".to_string());
+                self.messages
+                    .push("  /stats  - Toggle stats panel".to_string());
+                self.messages
+                    .push("  /pet    - Toggle pet panel".to_string());
+                self.messages
+                    .push("  /quit   - Exit the program".to_string());
+                self.messages
+                    .push("  Ctrl+C  - Exit the program".to_string());
             }
             other => {
-                self.messages.push(format!("Unknown command: {}. Type /help for commands.", other));
+                self.messages.push(format!(
+                    "Unknown command: {}. Type /help for commands.",
+                    other
+                ));
             }
         }
         None
@@ -733,7 +1017,12 @@ impl RatatuiUi {
             AgentEvent::LlmText(text) => {
                 self.messages.push(format!(
                     "  \u{1f4ad} {}",
-                    text.lines().next().unwrap_or("").chars().take(80).collect::<String>()
+                    text.lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(80)
+                        .collect::<String>()
                 ));
                 self.follow_tail = true;
             }
@@ -745,7 +1034,8 @@ impl RatatuiUi {
             AgentEvent::ToolEnd { name, success } => {
                 let icon = if success { "\u{2713}" } else { "\u{2717}" };
                 let status = if success { "完成" } else { "失败" };
-                self.messages.push(format!("  {} {} {}", icon, name, status));
+                self.messages
+                    .push(format!("  {} {} {}", icon, name, status));
                 self.follow_tail = true;
             }
             AgentEvent::Done(response) => {
@@ -824,8 +1114,10 @@ impl RatatuiUi {
                 if let Event::Key(key) = event::read()? {
                     if !self.processing {
                         self.idle_ticks = 0;
-                        self.typing_intensity = self.typing_intensity
-                            .saturating_add(TYPING_BOOST_PER_KEY).min(40);
+                        self.typing_intensity = self
+                            .typing_intensity
+                            .saturating_add(TYPING_BOOST_PER_KEY)
+                            .min(40);
                     }
 
                     match key.code {
@@ -869,7 +1161,9 @@ impl RatatuiUi {
 
                                 if is_slash_command(&user_input) {
                                     if let Some(ref mut agent) = agent_opt {
-                                        if let Some(action) = self.handle_command(&user_input, agent) {
+                                        if let Some(action) =
+                                            self.handle_command(&user_input, agent)
+                                        {
                                             exit_action = action;
                                             break;
                                         }
@@ -913,7 +1207,8 @@ impl RatatuiUi {
             } else {
                 if !self.processing {
                     self.idle_ticks += 1;
-                    self.typing_intensity = self.typing_intensity.saturating_sub(TYPING_DECAY_PER_TICK);
+                    self.typing_intensity =
+                        self.typing_intensity.saturating_sub(TYPING_DECAY_PER_TICK);
                 }
             }
 
@@ -929,7 +1224,8 @@ impl RatatuiUi {
                     self.pet_state = PetState::Idle;
                 } else if self.pet_state == PetState::Error && self.idle_ticks > 50 {
                     self.pet_state = PetState::Idle;
-                } else if (self.pet_state == PetState::Typing || self.pet_state == PetState::TypingFast)
+                } else if (self.pet_state == PetState::Typing
+                    || self.pet_state == PetState::TypingFast)
                     && self.typing_intensity == 0
                 {
                     self.pet_state = PetState::Idle;

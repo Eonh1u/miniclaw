@@ -59,7 +59,9 @@ impl MdRenderer {
             return Style::default().fg(Color::Green);
         }
         if self.in_code_span {
-            return Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+            return Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD);
         }
         if self.in_heading > 0 {
             let color = match self.in_heading {
@@ -85,10 +87,8 @@ impl MdRenderer {
             for (i, code_line) in text.split('\n').enumerate() {
                 if i > 0 {
                     self.flush_line();
-                    self.current_spans.push(Span::styled(
-                        "  ".to_string(),
-                        Style::default(),
-                    ));
+                    self.current_spans
+                        .push(Span::styled("  ".to_string(), Style::default()));
                 }
                 if !code_line.is_empty() {
                     self.current_spans.push(Span::styled(
@@ -106,7 +106,8 @@ impl MdRenderer {
                 self.flush_line();
             }
             if !segment.is_empty() {
-                self.current_spans.push(Span::styled(segment.to_string(), style));
+                self.current_spans
+                    .push(Span::styled(segment.to_string(), style));
             }
         }
     }
@@ -126,11 +127,11 @@ impl MdRenderer {
             Event::End(tag) => self.end_tag(tag),
             Event::Text(text) => self.push_text(&text),
             Event::Code(code) => {
-                let style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-                self.current_spans.push(Span::styled(
-                    format!("`{}`", code),
-                    style,
-                ));
+                let style = Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD);
+                self.current_spans
+                    .push(Span::styled(format!("`{}`", code), style));
             }
             Event::SoftBreak => {
                 self.current_spans.push(Span::raw(" ".to_string()));
@@ -189,10 +190,8 @@ impl MdRenderer {
                     }
                     None => "  ".to_string(),
                 };
-                self.current_spans.push(Span::styled(
-                    bullet,
-                    Style::default().fg(Color::DarkGray),
-                ));
+                self.current_spans
+                    .push(Span::styled(bullet, Style::default().fg(Color::DarkGray)));
             }
             Tag::BlockQuote(_) => {
                 self.current_spans.push(Span::styled(

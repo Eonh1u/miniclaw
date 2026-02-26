@@ -106,10 +106,12 @@ impl AppConfig {
         let config_path = Self::config_path()?;
 
         let mut config = if config_path.exists() {
-            let content = std::fs::read_to_string(&config_path)
-                .with_context(|| format!("Failed to read config file: {}", config_path.display()))?;
-            toml::from_str(&content)
-                .with_context(|| format!("Failed to parse config file: {}", config_path.display()))?
+            let content = std::fs::read_to_string(&config_path).with_context(|| {
+                format!("Failed to read config file: {}", config_path.display())
+            })?;
+            toml::from_str(&content).with_context(|| {
+                format!("Failed to parse config file: {}", config_path.display())
+            })?
         } else {
             Self::default()
         };
@@ -138,7 +140,9 @@ impl AppConfig {
                 "API key not found. Either:\n  \
                  1. Set api_key in config file: {}\n  \
                  2. Set environment variable: export {}=your-key",
-                Self::config_path().map(|p| p.display().to_string()).unwrap_or_default(),
+                Self::config_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default(),
                 self.llm.api_key_env
             )
         })
@@ -147,8 +151,9 @@ impl AppConfig {
     pub fn save_default() -> Result<PathBuf> {
         let config_path = Self::config_path()?;
         if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create config directory: {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create config directory: {}", parent.display())
+            })?;
         }
         let default = Self::default();
         let content = toml::to_string_pretty(&default).context("Failed to serialize config")?;

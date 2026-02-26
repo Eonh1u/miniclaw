@@ -53,7 +53,8 @@ impl Tool for WriteFileTool {
 
         // Create directory if it doesn't exist
         if let Some(parent) = std::path::Path::new(path).parent() {
-            tokio::fs::create_dir_all(parent).await
+            tokio::fs::create_dir_all(parent)
+                .await
                 .with_context(|| format!("Failed to create directory for: {}", path))?;
         }
 
@@ -62,7 +63,11 @@ impl Tool for WriteFileTool {
             .await
             .with_context(|| format!("Failed to write file: {}", path))?;
 
-        Ok(format!("Successfully wrote {} characters to file: {}", content.len(), path))
+        Ok(format!(
+            "Successfully wrote {} characters to file: {}",
+            content.len(),
+            path
+        ))
     }
 }
 

@@ -34,10 +34,7 @@ pub fn load_rules(project_root: &Path) -> Vec<RuleFile> {
     let mut rules: Vec<RuleFile> = ancestor_rules;
 
     try_load(&project_root.join("CLAUDE.md"), &mut rules);
-    try_load(
-        &project_root.join(".claude").join("CLAUDE.md"),
-        &mut rules,
-    );
+    try_load(&project_root.join(".claude").join("CLAUDE.md"), &mut rules);
 
     rules
 }

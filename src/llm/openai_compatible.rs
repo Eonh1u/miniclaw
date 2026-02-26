@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::LlmProvider;
-use crate::types::{ChatRequest, ChatResponse, Role, StreamChunk, ToolCall, TokenUsage};
+use crate::types::{ChatRequest, ChatResponse, Role, StreamChunk, TokenUsage, ToolCall};
 
 pub struct OpenAiCompatibleProvider {
     api_key: String,
@@ -179,7 +179,11 @@ impl OpenAiCompatibleProvider {
                     };
                     api_messages.push(ApiMessage {
                         role: "assistant".to_string(),
-                        content: if msg.content.is_empty() { None } else { Some(msg.content.clone()) },
+                        content: if msg.content.is_empty() {
+                            None
+                        } else {
+                            Some(msg.content.clone())
+                        },
                         tool_calls,
                         tool_call_id: None,
                     });
@@ -241,7 +245,11 @@ impl OpenAiCompatibleProvider {
             output_tokens: u.completion_tokens.unwrap_or(0),
         });
 
-        Ok(ChatResponse { content, tool_calls, usage })
+        Ok(ChatResponse {
+            content,
+            tool_calls,
+            usage,
+        })
     }
 }
 
@@ -283,8 +291,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
         let api_request = self.build_api_request(request);
         let url = format!("{}/chat/completions", self.api_base.trim_end_matches('/'));
 
-        let mut body = serde_json::to_value(&api_request)
-            .context("Failed to serialize request")?;
+        let mut body = serde_json::to_value(&api_request).context("Failed to serialize request")?;
         body["stream"] = serde_json::json!(true);
         body["stream_options"] = serde_json::json!({"include_usage": true});
 

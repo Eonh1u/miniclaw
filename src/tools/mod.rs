@@ -13,9 +13,9 @@
 //! - **Box<dyn Tool>**: Rust's way of storing different types that implement
 //!   the same trait in a single collection (trait objects / dynamic dispatch)
 
+pub mod list_directory;
 pub mod read_file;
 pub mod write_file;
-pub mod list_directory;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -85,8 +85,9 @@ impl ToolRouter {
             .find(|t| t.name() == name)
             .with_context(|| format!("Unknown tool: {}", name))?;
 
-        let params: serde_json::Value = serde_json::from_str(arguments)
-            .with_context(|| format!("Invalid JSON arguments for tool '{}': {}", name, arguments))?;
+        let params: serde_json::Value = serde_json::from_str(arguments).with_context(|| {
+            format!("Invalid JSON arguments for tool '{}': {}", name, arguments)
+        })?;
 
         tool.execute(params).await
     }
@@ -161,7 +162,10 @@ mod tests {
             write!(tmp, "router test").unwrap();
 
             let result = router
-                .execute("read_file", &format!(r#"{{"path":"{}"}}"#, tmp.path().display()))
+                .execute(
+                    "read_file",
+                    &format!(r#"{{"path":"{}"}}"#, tmp.path().display()),
+                )
                 .await
                 .unwrap();
 

@@ -134,7 +134,14 @@ fn collect_entries(
         if is_dir {
             entries.push(format!("{}📁 {}/", indent, name));
             if recursive && current_depth < max_depth {
-                collect_entries(base, &entry.path(), recursive, max_depth, current_depth + 1, entries)?;
+                collect_entries(
+                    base,
+                    &entry.path(),
+                    recursive,
+                    max_depth,
+                    current_depth + 1,
+                    entries,
+                )?;
             }
         } else {
             let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);

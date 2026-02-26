@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::LlmProvider;
-use crate::types::{ChatRequest, ChatResponse, Role, StreamChunk, ToolCall, TokenUsage};
+use crate::types::{ChatRequest, ChatResponse, Role, StreamChunk, TokenUsage, ToolCall};
 
 pub struct AnthropicProvider {
     api_key: String,
@@ -117,7 +117,9 @@ impl AnthropicProvider {
                     } else {
                         let mut blocks = Vec::new();
                         if !msg.content.is_empty() {
-                            blocks.push(ContentBlock::Text { text: msg.content.clone() });
+                            blocks.push(ContentBlock::Text {
+                                text: msg.content.clone(),
+                            });
                         }
                         for tc in &msg.tool_calls {
                             let input: serde_json::Value =
@@ -189,7 +191,11 @@ impl AnthropicProvider {
             output_tokens: u.output_tokens.unwrap_or(0),
         });
 
-        ChatResponse { content, tool_calls, usage }
+        ChatResponse {
+            content,
+            tool_calls,
+            usage,
+        }
     }
 }
 
@@ -239,8 +245,7 @@ impl LlmProvider for AnthropicProvider {
         let api_request = self.build_api_request(request);
         let url = format!("{}/v1/messages", self.api_base.trim_end_matches('/'));
 
-        let mut body = serde_json::to_value(&api_request)
-            .context("Failed to serialize request")?;
+        let mut body = serde_json::to_value(&api_request).context("Failed to serialize request")?;
         body["stream"] = serde_json::json!(true);
 
         let response = self
@@ -331,11 +336,10 @@ impl LlmProvider for AnthropicProvider {
                                 delta.get("type").and_then(|v| v.as_str()).unwrap_or("");
                             match delta_type {
                                 "text_delta" => {
-                                    if let Some(text) = delta.get("text").and_then(|v| v.as_str())
-                                    {
+                                    if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
                                         content.push_str(text);
-                                        let _ = chunk_tx
-                                            .send(StreamChunk::TextDelta(text.to_string()));
+                                        let _ =
+                                            chunk_tx.send(StreamChunk::TextDelta(text.to_string()));
                                     }
                                 }
                                 "input_json_delta" => {
