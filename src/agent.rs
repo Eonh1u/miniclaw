@@ -4,13 +4,15 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use tokio::sync::mpsc;
 
 use crate::config::AppConfig;
+use crate::llm::anthropic::AnthropicProvider;
+use crate::llm::openai_compatible::OpenAiCompatibleProvider;
 use crate::llm::LlmProvider;
 use crate::rules;
-use crate::tools::ToolRouter;
+use crate::tools::{create_default_router, ToolRouter};
 use crate::types::{ChatRequest, ChatResponse, Message, StreamChunk, TokenUsage};
 
 /// Events emitted by the Agent during processing, allowing the TUI
@@ -188,8 +190,31 @@ impl Agent {
         }
     }
 
+    /// Factory method: create a new Agent from config (creates LLM provider + tool router).
+    pub fn create(config: &AppConfig, project_root: &Path) -> Result<Self> {
+        let api_key = config.api_key()?;
+        let api_base = config.llm.api_base.clone();
+        let llm: Box<dyn LlmProvider> = match config.llm.provider.as_str() {
+            "anthropic" => Box::new(AnthropicProvider::new(api_key, api_base)),
+            "openai_compatible" | "openai" => {
+                Box::new(OpenAiCompatibleProvider::new(api_key, api_base))
+            }
+            other => bail!(
+                "Unknown provider: '{}'. Supported: 'anthropic', 'openai_compatible'",
+                other
+            ),
+        };
+        let tool_router = create_default_router();
+        Ok(Self::new(llm, tool_router, config.clone(), project_root))
+    }
+
     pub fn history(&self) -> &[Message] {
         &self.messages
+    }
+
+    /// Replace the message history (used when restoring a saved session).
+    pub fn set_messages(&mut self, messages: Vec<Message>) {
+        self.messages = messages;
     }
 
     pub fn clear_history(&mut self) {

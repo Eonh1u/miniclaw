@@ -1,7 +1,10 @@
-//! Modern TUI implementation using ratatui with pluggable header widgets.
+//! Modern TUI implementation using ratatui with pluggable header widgets
+//! and multi-session tab support.
+
+use std::path::PathBuf;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::terminal;
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
@@ -11,8 +14,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::agent::{Agent, AgentEvent};
+use crate::agent::{Agent, AgentEvent, SessionStats};
 use crate::config::AppConfig;
+use crate::session::{self, SessionData, SessionStatsData};
 use crate::ui::{HeaderWidget, UiExitAction, WidgetContext};
 
 // ── Slash Command Definitions ───────────────────────────────
@@ -32,6 +36,38 @@ const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Clear conversation history",
     },
     SlashCommand {
+        name: "/new",
+        description: "Create new session tab",
+    },
+    SlashCommand {
+        name: "/close",
+        description: "Close current session tab",
+    },
+    SlashCommand {
+        name: "/rename",
+        description: "Rename current session (/rename <name>)",
+    },
+    SlashCommand {
+        name: "/sessions",
+        description: "List saved sessions",
+    },
+    SlashCommand {
+        name: "/save",
+        description: "Save current session (/save [name])",
+    },
+    SlashCommand {
+        name: "/load",
+        description: "Load saved session (/load <id>)",
+    },
+    SlashCommand {
+        name: "/export",
+        description: "Export session to file (/export <path>)",
+    },
+    SlashCommand {
+        name: "/import",
+        description: "Import session from file (/import <path>)",
+    },
+    SlashCommand {
         name: "/stats",
         description: "Toggle stats panel",
     },
@@ -49,15 +85,17 @@ const SLASH_COMMANDS: &[SlashCommand] = &[
     },
 ];
 
-/// Check if input looks like a slash command (e.g. "/help", "/clear"),
-/// as opposed to a file path like "/root/code/..." or "/tmp/file.txt".
 fn is_slash_command(input: &str) -> bool {
     let input = input.trim();
     if !input.starts_with('/') {
         return false;
     }
     let after_slash = &input[1..];
-    !after_slash.is_empty() && after_slash.chars().all(|c| c.is_ascii_lowercase())
+    if after_slash.is_empty() {
+        return false;
+    }
+    let cmd_part = after_slash.split_whitespace().next().unwrap_or("");
+    !cmd_part.is_empty() && cmd_part.chars().all(|c| c.is_ascii_lowercase())
 }
 
 /// Autocomplete popup state for slash commands.
@@ -77,14 +115,21 @@ impl SlashAutocomplete {
     }
 
     fn update_filter(&mut self, input: &str) {
-        if !is_slash_command(input) && input != "/" {
+        let cmd_part = input.split_whitespace().next().unwrap_or(input);
+        if !is_slash_command(cmd_part) && cmd_part != "/" {
+            self.visible = false;
+            self.filtered.clear();
+            self.selected = 0;
+            return;
+        }
+        if input.contains(' ') {
             self.visible = false;
             self.filtered.clear();
             self.selected = 0;
             return;
         }
 
-        let query = input.to_lowercase();
+        let query = cmd_part.to_lowercase();
         self.filtered = SLASH_COMMANDS
             .iter()
             .enumerate()
@@ -130,6 +175,7 @@ impl SlashAutocomplete {
 struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
         ratatui::restore();
     }
 }
@@ -389,7 +435,6 @@ impl PetState {
 
 // ── Built-in Header Widgets ─────────────────────────────────
 
-/// Stats widget: shows token counts and usage days.
 pub struct StatsWidget;
 
 impl HeaderWidget for StatsWidget {
@@ -398,11 +443,10 @@ impl HeaderWidget for StatsWidget {
     }
     fn preferred_width(&self) -> Option<u16> {
         None
-    } // fill remaining
+    }
 
-    fn render(&self, f: &mut Frame, area: ratatui::layout::Rect, ctx: &WidgetContext) {
+    fn render(&self, f: &mut Frame, area: Rect, ctx: &WidgetContext) {
         let stats = ctx.stats;
-
         let status_line = if ctx.processing {
             Line::from(vec![
                 Span::raw("  "),
@@ -478,7 +522,6 @@ impl HeaderWidget for StatsWidget {
     }
 }
 
-/// Pet animation widget.
 pub struct PetWidget;
 
 impl HeaderWidget for PetWidget {
@@ -489,7 +532,7 @@ impl HeaderWidget for PetWidget {
         Some(20)
     }
 
-    fn render(&self, f: &mut Frame, area: ratatui::layout::Rect, ctx: &WidgetContext) {
+    fn render(&self, f: &mut Frame, area: Rect, ctx: &WidgetContext) {
         let state = &ctx.pet_state;
         let art_color = state.color();
         let frame = state.current_frame(ctx.anim_tick);
@@ -570,9 +613,188 @@ fn ensure_first_use_date() -> Option<chrono::NaiveDate> {
     Some(today)
 }
 
+// ── Per-session tab state ───────────────────────────────────
+
+struct SessionTab {
+    id: String,
+    name: String,
+    messages: Vec<String>,
+    scroll_offset: usize,
+    follow_tail: bool,
+    processing: bool,
+    pet_state: PetState,
+    streaming_message_idx: Option<usize>,
+    tool_progress_idx: Option<usize>,
+    cached_stats: SessionStats,
+    agent: Option<Agent>,
+    event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<AgentEvent>>,
+    agent_handle: Option<tokio::task::JoinHandle<Result<Agent>>>,
+}
+
+impl SessionTab {
+    fn new(id: String, name: String, agent: Agent) -> Self {
+        let stats = agent.stats.clone();
+        Self {
+            id,
+            name,
+            messages: vec!["Welcome to miniclaw! Type your message or /help for commands.".into()],
+            scroll_offset: 0,
+            follow_tail: true,
+            processing: false,
+            pet_state: PetState::Idle,
+            streaming_message_idx: None,
+            tool_progress_idx: None,
+            cached_stats: stats,
+            agent: Some(agent),
+            event_rx: None,
+            agent_handle: None,
+        }
+    }
+
+    fn to_session_data(&self) -> SessionData {
+        let agent_messages = self
+            .agent
+            .as_ref()
+            .map(|a| a.history().to_vec())
+            .unwrap_or_default();
+        SessionData {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            created_at: session::now_timestamp(),
+            agent_messages,
+            ui_messages: self.messages.clone(),
+            stats: SessionStatsData::from(&self.cached_stats),
+        }
+    }
+
+    fn handle_agent_event(&mut self, event: AgentEvent) {
+        match event {
+            AgentEvent::StreamDelta(delta) => {
+                if let Some(idx) = self.streaming_message_idx {
+                    self.messages[idx].push_str(&delta);
+                } else {
+                    self.messages.push(format!("Assistant: {}", delta));
+                    self.streaming_message_idx = Some(self.messages.len() - 1);
+                }
+                self.follow_tail = true;
+            }
+            AgentEvent::LlmText(text) => {
+                self.messages.push(format!(
+                    "  \u{1f4ad} {}",
+                    text.lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(80)
+                        .collect::<String>()
+                ));
+                self.follow_tail = true;
+            }
+            AgentEvent::ToolStart { name, arguments } => {
+                self.streaming_message_idx = None;
+                let text = tool_display_text(&name, &arguments, true);
+                self.messages.push(text);
+                self.tool_progress_idx = Some(self.messages.len() - 1);
+                self.follow_tail = true;
+            }
+            AgentEvent::ToolEnd {
+                name,
+                arguments,
+                success,
+            } => {
+                let text = if success {
+                    tool_display_text(&name, &arguments, false)
+                } else {
+                    tool_display_text_error(&name, &arguments)
+                };
+                if let Some(idx) = self.tool_progress_idx.take() {
+                    self.messages[idx] = text;
+                } else {
+                    self.messages.push(text);
+                }
+                self.follow_tail = true;
+            }
+            AgentEvent::Done(response) => {
+                self.tool_progress_idx = None;
+                if self.streaming_message_idx.is_some() {
+                    self.streaming_message_idx = None;
+                } else if !response.is_empty() {
+                    self.messages.push(format!("Assistant: {}", response));
+                }
+                self.pet_state = PetState::Happy;
+                self.processing = false;
+                self.follow_tail = true;
+            }
+            AgentEvent::Error(e) => {
+                self.streaming_message_idx = None;
+                self.tool_progress_idx = None;
+                self.messages.push(format!("Error: {}", e));
+                self.pet_state = PetState::Error;
+                self.processing = false;
+                self.follow_tail = true;
+            }
+        }
+    }
+}
+
+fn tool_display_text(name: &str, arguments: &str, in_progress: bool) -> String {
+    let args: serde_json::Value =
+        serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null);
+    let (action, target) = match name {
+        "read_file" => {
+            let path = args["path"].as_str().unwrap_or("?");
+            if in_progress {
+                ("读取文件", path.to_string())
+            } else {
+                ("已读取", path.to_string())
+            }
+        }
+        "write_file" => {
+            let path = args["path"].as_str().unwrap_or("?");
+            if in_progress {
+                ("写入文件", path.to_string())
+            } else {
+                ("已写入", path.to_string())
+            }
+        }
+        "list_directory" => {
+            let path = args["path"].as_str().unwrap_or(".");
+            if in_progress {
+                ("浏览目录", path.to_string())
+            } else {
+                ("已浏览", path.to_string())
+            }
+        }
+        other => {
+            if in_progress {
+                ("调用", other.to_string())
+            } else {
+                ("完成", other.to_string())
+            }
+        }
+    };
+    if in_progress {
+        format!("TOOL_PROGRESS:⚡ {} {} ...", action, target)
+    } else {
+        format!("TOOL_DONE:✓ {} {}", action, target)
+    }
+}
+
+fn tool_display_text_error(name: &str, arguments: &str) -> String {
+    let args: serde_json::Value =
+        serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null);
+    let target = match name {
+        "read_file" | "write_file" => args["path"].as_str().unwrap_or("?").to_string(),
+        "list_directory" => args["path"].as_str().unwrap_or(".").to_string(),
+        other => other.to_string(),
+    };
+    format!("TOOL_ERROR:✗ {} {} 失败", name, target)
+}
+
 // ── TUI State ───────────────────────────────────────────────
 
 const HEADER_HEIGHT: u16 = 10;
+const TAB_BAR_HEIGHT: u16 = 1;
 const TYPING_FAST_THRESHOLD: u32 = 15;
 const TYPING_DECAY_PER_TICK: u32 = 1;
 const TYPING_BOOST_PER_KEY: u32 = 4;
@@ -580,24 +802,21 @@ const TYPING_BOOST_PER_KEY: u32 = 4;
 pub struct RatatuiUi {
     input: String,
     cursor_position: usize,
-    messages: Vec<String>,
-    scroll_offset: usize,
-    follow_tail: bool,
-    processing: bool,
-    pet_state: PetState,
     anim_tick: u32,
     idle_ticks: u32,
     typing_intensity: u32,
     header_widgets: Vec<Box<dyn HeaderWidget>>,
     first_use_date: Option<chrono::NaiveDate>,
     autocomplete: SlashAutocomplete,
-    cached_stats: crate::agent::SessionStats,
-    streaming_message_idx: Option<usize>,
-    tool_progress_idx: Option<usize>,
+    tabs: Vec<SessionTab>,
+    active_tab: usize,
+    config: AppConfig,
+    project_root: PathBuf,
+    tab_bar_rect: Rect,
 }
 
 impl RatatuiUi {
-    pub fn new(config: &AppConfig) -> Self {
+    pub fn new(config: AppConfig, project_root: PathBuf) -> Self {
         let mut header_widgets: Vec<Box<dyn HeaderWidget>> = Vec::new();
         if config.ui.show_stats {
             header_widgets.push(Box::new(StatsWidget));
@@ -609,26 +828,37 @@ impl RatatuiUi {
         Self {
             input: String::new(),
             cursor_position: 0,
-            messages: vec![
-                "Welcome to miniclaw! Type your message or /help for commands.".to_string(),
-            ],
-            scroll_offset: 0,
-            follow_tail: true,
-            processing: false,
-            pet_state: PetState::Idle,
             anim_tick: 0,
             idle_ticks: 0,
             typing_intensity: 0,
             header_widgets,
             first_use_date: ensure_first_use_date(),
             autocomplete: SlashAutocomplete::new(),
-            cached_stats: crate::agent::SessionStats::default(),
-            streaming_message_idx: None,
-            tool_progress_idx: None,
+            tabs: Vec::new(),
+            active_tab: 0,
+            config,
+            project_root,
+            tab_bar_rect: Rect::default(),
         }
     }
 
-    /// Toggle a widget by id. Returns true if the widget is now visible.
+    fn active(&self) -> &SessionTab {
+        &self.tabs[self.active_tab]
+    }
+
+    fn active_mut(&mut self) -> &mut SessionTab {
+        &mut self.tabs[self.active_tab]
+    }
+
+    fn create_new_tab(&mut self, name: Option<String>) -> Result<()> {
+        let id = session::generate_session_id();
+        let tab_name = name.unwrap_or_else(|| format!("Session {}", self.tabs.len() + 1));
+        let agent = Agent::create(&self.config, &self.project_root)?;
+        self.tabs.push(SessionTab::new(id, tab_name, agent));
+        self.active_tab = self.tabs.len() - 1;
+        Ok(())
+    }
+
     fn toggle_widget(&mut self, id: &str) -> bool {
         if let Some(pos) = self.header_widgets.iter().position(|w| w.id() == id) {
             self.header_widgets.remove(pos);
@@ -743,9 +973,9 @@ impl RatatuiUi {
         }
     }
 
-    fn build_conversation_lines(&self) -> Vec<Line<'static>> {
+    fn build_conversation_lines(messages: &[String]) -> Vec<Line<'static>> {
         let mut text_lines = Vec::new();
-        for msg in &self.messages {
+        for msg in messages {
             if let Some(rest) = msg.strip_prefix("You: ") {
                 text_lines.push(Line::from(vec![
                     Span::styled("You: ".to_string(), Style::default().fg(Color::Green)),
@@ -808,31 +1038,60 @@ impl RatatuiUi {
             .sum()
     }
 
-    fn render_conversation(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let text_lines = self.build_conversation_lines();
+    fn render_tab_bar(&mut self, f: &mut Frame, area: Rect) {
+        self.tab_bar_rect = area;
+        let mut spans = Vec::new();
+        for (i, tab) in self.tabs.iter().enumerate() {
+            let label = if tab.processing {
+                format!(" {}⏳ ", tab.name)
+            } else {
+                format!(" {} ", tab.name)
+            };
+            if i == self.active_tab {
+                spans.push(Span::styled(
+                    label,
+                    Style::default()
+                        .bg(Color::Cyan)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            } else {
+                spans.push(Span::styled(label, Style::default().fg(Color::DarkGray)));
+            }
+            if i + 1 < self.tabs.len() {
+                spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+            }
+        }
+        spans.push(Span::styled("  [+]", Style::default().fg(Color::Green)));
+        let line = Line::from(spans);
+        let widget = Paragraph::new(vec![line]).style(Style::default().bg(Color::Black));
+        f.render_widget(widget, area);
+    }
+
+    fn render_conversation(&self, f: &mut Frame, area: Rect) {
+        let tab = self.active();
+        let text_lines = Self::build_conversation_lines(&tab.messages);
         let visible_height = area.height.saturating_sub(2) as usize;
         let wrap_width = area.width.saturating_sub(2) as usize;
         let total_rendered = Self::estimate_rendered_lines(&text_lines, wrap_width);
         let max_scroll = total_rendered.saturating_sub(visible_height);
 
-        if self.follow_tail {
-            self.scroll_offset = max_scroll;
+        let scroll = if tab.follow_tail {
+            max_scroll
         } else {
-            self.scroll_offset = self.scroll_offset.min(max_scroll);
-            if self.scroll_offset >= max_scroll {
-                self.follow_tail = true;
-            }
-        }
+            tab.scroll_offset.min(max_scroll)
+        };
 
         let p = Paragraph::new(text_lines)
             .block(Block::default().borders(Borders::ALL).title("Conversation"))
             .wrap(Wrap { trim: true })
-            .scroll((self.scroll_offset as u16, 0));
+            .scroll((scroll as u16, 0));
         f.render_widget(p, area);
     }
 
     fn render_input(&self, f: &mut Frame, area: Rect) {
-        let input_text = if self.processing {
+        let tab = self.active();
+        let input_text = if tab.processing {
             "Processing... Please wait."
         } else {
             &self.input[..]
@@ -843,20 +1102,20 @@ impl RatatuiUi {
                 .title("Input (Ctrl+C quit)"),
         );
         f.render_widget(p, area);
-        if !self.processing {
+        if !tab.processing {
             let col = self.cursor_display_width();
             f.set_cursor_position((area.x + col + 1, area.y + 1));
         }
     }
 
     fn render_autocomplete(&self, f: &mut Frame, input_area: Rect) {
-        if !self.autocomplete.visible || self.processing {
+        if !self.autocomplete.visible || self.active().processing {
             return;
         }
 
         let item_count = self.autocomplete.filtered.len() as u16;
-        let popup_height = item_count + 2; // +2 for borders
-        let popup_width = 40u16.min(input_area.width);
+        let popup_height = item_count + 2;
+        let popup_width = 50u16.min(input_area.width);
 
         let popup_area = Rect {
             x: input_area.x,
@@ -882,7 +1141,7 @@ impl RatatuiUi {
                 };
                 Line::from(vec![
                     Span::styled(
-                        format!(" {:<8}", cmd.name),
+                        format!(" {:<12}", cmd.name),
                         Style::default()
                             .fg(fg_name)
                             .bg(bg)
@@ -910,22 +1169,17 @@ impl RatatuiUi {
         f.render_widget(popup, popup_area);
     }
 
-    fn render_header(
-        &self,
-        f: &mut Frame,
-        area: ratatui::layout::Rect,
-        stats: &crate::agent::SessionStats,
-    ) {
+    fn render_header(&self, f: &mut Frame, area: Rect) {
         if self.header_widgets.is_empty() {
             return;
         }
-
+        let tab = self.active();
         let ctx = WidgetContext {
-            stats,
-            messages: &self.messages,
-            processing: self.processing,
+            stats: &tab.cached_stats,
+            messages: &tab.messages,
+            processing: tab.processing,
             anim_tick: self.anim_tick,
-            pet_state: self.pet_state,
+            pet_state: tab.pet_state,
             idle_ticks: self.idle_ticks,
             typing_intensity: self.typing_intensity,
             first_use_date: self.first_use_date,
@@ -941,7 +1195,6 @@ impl RatatuiUi {
             .collect();
 
         let cols = Layout::horizontal(constraints).split(area);
-
         for (i, widget) in self.header_widgets.iter().enumerate() {
             if i < cols.len() {
                 widget.render(f, cols[i], &ctx);
@@ -949,71 +1202,241 @@ impl RatatuiUi {
         }
     }
 
-    fn draw_ui(&mut self, f: &mut Frame, stats: &crate::agent::SessionStats) {
+    fn draw_ui(&mut self, f: &mut Frame) {
         let area = f.area();
-
         let header_h = if self.header_widgets.is_empty() {
             0
         } else {
             HEADER_HEIGHT
         };
+        let show_tabs = self.tabs.len() > 1;
+        let tab_h = if show_tabs { TAB_BAR_HEIGHT } else { 0 };
+
         let rows = Layout::vertical([
             Constraint::Length(header_h),
+            Constraint::Length(tab_h),
             Constraint::Min(4),
             Constraint::Length(3),
         ])
         .split(area);
 
         if header_h > 0 {
-            self.render_header(f, rows[0], stats);
+            self.render_header(f, rows[0]);
         }
-        self.render_conversation(f, rows[1]);
-        self.render_input(f, rows[2]);
-        self.render_autocomplete(f, rows[2]);
+        if show_tabs {
+            self.render_tab_bar(f, rows[1]);
+        }
+        self.render_conversation(f, rows[2]);
+        self.render_input(f, rows[3]);
+        self.render_autocomplete(f, rows[3]);
     }
 
-    /// Handle a slash command. Returns Some(action) to break the loop, or None.
-    fn handle_command(&mut self, cmd: &str, agent: &mut Agent) -> Option<UiExitAction> {
-        match cmd {
+    fn handle_command(&mut self, cmd: &str) -> Option<UiExitAction> {
+        let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
+        let command = parts[0];
+        let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
+
+        match command {
             "/quit" | "/exit" => return Some(UiExitAction::Quit),
             "/clear" => {
-                agent.clear_history();
-                self.messages.clear();
-                self.messages.push("Conversation cleared.".to_string());
-                self.scroll_offset = 0;
-                self.follow_tail = true;
+                if let Some(agent) = self.active_mut().agent.as_mut() {
+                    agent.clear_history();
+                }
+                self.active_mut().messages.clear();
+                self.active_mut()
+                    .messages
+                    .push("Conversation cleared.".into());
+                self.active_mut().scroll_offset = 0;
+                self.active_mut().follow_tail = true;
+            }
+            "/new" => {
+                let name = if arg.is_empty() {
+                    None
+                } else {
+                    Some(arg.to_string())
+                };
+                match self.create_new_tab(name) {
+                    Ok(()) => {
+                        let n = self.active().name.clone();
+                        self.active_mut()
+                            .messages
+                            .push(format!("[Created new session: {}]", n));
+                    }
+                    Err(e) => {
+                        self.active_mut()
+                            .messages
+                            .push(format!("Error creating session: {}", e));
+                    }
+                }
+            }
+            "/close" => {
+                if self.tabs.len() <= 1 {
+                    self.active_mut()
+                        .messages
+                        .push("[Cannot close the last session]".into());
+                } else {
+                    self.tabs.remove(self.active_tab);
+                    if self.active_tab >= self.tabs.len() {
+                        self.active_tab = self.tabs.len() - 1;
+                    }
+                }
+            }
+            "/rename" => {
+                if arg.is_empty() {
+                    self.active_mut()
+                        .messages
+                        .push("Usage: /rename <name>".into());
+                } else {
+                    self.active_mut().name = arg.to_string();
+                    self.active_mut()
+                        .messages
+                        .push(format!("[Session renamed to: {}]", arg));
+                }
+            }
+            "/sessions" => match session::list_sessions() {
+                Ok(sessions) if sessions.is_empty() => {
+                    self.active_mut()
+                        .messages
+                        .push("[No saved sessions]".into());
+                }
+                Ok(sessions) => {
+                    self.active_mut()
+                        .messages
+                        .push("--- Saved Sessions ---".into());
+                    for s in &sessions {
+                        self.active_mut().messages.push(format!(
+                            "  {} | {} | {} | msgs: {}",
+                            s.id,
+                            s.name,
+                            s.created_at,
+                            s.ui_messages.len()
+                        ));
+                    }
+                }
+                Err(e) => {
+                    self.active_mut()
+                        .messages
+                        .push(format!("Error listing sessions: {}", e));
+                }
+            },
+            "/save" => {
+                let name = if arg.is_empty() {
+                    None
+                } else {
+                    Some(arg.to_string())
+                };
+                if let Some(n) = name {
+                    self.active_mut().name = n;
+                }
+                let data = self.active().to_session_data();
+                match session::save_session(&data) {
+                    Ok(path) => {
+                        self.active_mut().messages.push(format!(
+                            "[Session saved: {} → {}]",
+                            data.name,
+                            path.display()
+                        ));
+                    }
+                    Err(e) => {
+                        self.active_mut()
+                            .messages
+                            .push(format!("Error saving session: {}", e));
+                    }
+                }
+            }
+            "/load" => {
+                if arg.is_empty() {
+                    self.active_mut()
+                        .messages
+                        .push("Usage: /load <session_id>".into());
+                } else {
+                    match self.load_session_as_tab(arg) {
+                        Ok(()) => {}
+                        Err(e) => {
+                            self.active_mut()
+                                .messages
+                                .push(format!("Error loading session: {}", e));
+                        }
+                    }
+                }
+            }
+            "/export" => {
+                if arg.is_empty() {
+                    self.active_mut()
+                        .messages
+                        .push("Usage: /export <path>".into());
+                } else {
+                    let data = self.active().to_session_data();
+                    match session::export_session(&data, std::path::Path::new(arg)) {
+                        Ok(()) => {
+                            self.active_mut()
+                                .messages
+                                .push(format!("[Session exported to {}]", arg));
+                        }
+                        Err(e) => {
+                            self.active_mut()
+                                .messages
+                                .push(format!("Error exporting: {}", e));
+                        }
+                    }
+                }
+            }
+            "/import" => {
+                if arg.is_empty() {
+                    self.active_mut()
+                        .messages
+                        .push("Usage: /import <path>".into());
+                } else {
+                    match self.import_session_as_tab(arg) {
+                        Ok(()) => {}
+                        Err(e) => {
+                            self.active_mut()
+                                .messages
+                                .push(format!("Error importing: {}", e));
+                        }
+                    }
+                }
             }
             "/stats" => {
                 let visible = self.toggle_widget("stats");
-                self.messages.push(format!(
+                self.active_mut().messages.push(format!(
                     "[Stats panel {}]",
                     if visible { "enabled" } else { "disabled" }
                 ));
             }
             "/pet" => {
                 let visible = self.toggle_widget("pet");
-                self.messages.push(format!(
+                self.active_mut().messages.push(format!(
                     "[Pet panel {}]",
                     if visible { "enabled" } else { "disabled" }
                 ));
             }
             "/help" => {
-                self.messages.push("--- Commands ---".to_string());
-                self.messages
-                    .push("  /help   - Show available commands".to_string());
-                self.messages
-                    .push("  /clear  - Clear conversation history".to_string());
-                self.messages
-                    .push("  /stats  - Toggle stats panel".to_string());
-                self.messages
-                    .push("  /pet    - Toggle pet panel".to_string());
-                self.messages
-                    .push("  /quit   - Exit the program".to_string());
-                self.messages
-                    .push("  Ctrl+C  - Exit the program".to_string());
+                let help = [
+                    "--- Commands ---",
+                    "  /help              Show available commands",
+                    "  /clear             Clear conversation history",
+                    "  /new [name]        Create new session tab",
+                    "  /close             Close current session tab",
+                    "  /rename <name>     Rename current session",
+                    "  /save [name]       Save current session",
+                    "  /load <id>         Load saved session",
+                    "  /sessions          List saved sessions",
+                    "  /export <path>     Export session to file",
+                    "  /import <path>     Import session from file",
+                    "  /stats             Toggle stats panel",
+                    "  /pet               Toggle pet panel",
+                    "  /quit              Exit the program",
+                    "",
+                    "  Ctrl+Left/Right    Switch session tabs",
+                    "  Ctrl+C             Exit the program",
+                ];
+                for line in help {
+                    self.active_mut().messages.push(line.to_string());
+                }
             }
             other => {
-                self.messages.push(format!(
+                self.active_mut().messages.push(format!(
                     "Unknown command: {}. Type /help for commands.",
                     other
                 ));
@@ -1022,239 +1445,162 @@ impl RatatuiUi {
         None
     }
 
-    fn tool_display_text(name: &str, arguments: &str, in_progress: bool) -> String {
-        let args: serde_json::Value =
-            serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null);
+    fn load_session_as_tab(&mut self, id: &str) -> Result<()> {
+        let data = session::load_session(id)?;
+        let mut agent = Agent::create(&self.config, &self.project_root)?;
+        agent.set_messages(data.agent_messages);
+        agent.stats = data.stats.to_session_stats();
+        let mut tab = SessionTab::new(data.id, data.name.clone(), agent);
+        tab.messages = data.ui_messages;
+        tab.cached_stats = data.stats.to_session_stats();
+        self.tabs.push(tab);
+        self.active_tab = self.tabs.len() - 1;
+        self.active_mut()
+            .messages
+            .push(format!("[Loaded session: {}]", data.name));
+        Ok(())
+    }
 
-        let (action, target) = match name {
-            "read_file" => {
-                let path = args["path"].as_str().unwrap_or("?");
-                if in_progress {
-                    ("读取文件", path.to_string())
-                } else {
-                    ("已读取", path.to_string())
-                }
-            }
-            "write_file" => {
-                let path = args["path"].as_str().unwrap_or("?");
-                if in_progress {
-                    ("写入文件", path.to_string())
-                } else {
-                    ("已写入", path.to_string())
-                }
-            }
-            "list_directory" => {
-                let path = args["path"].as_str().unwrap_or(".");
-                if in_progress {
-                    ("浏览目录", path.to_string())
-                } else {
-                    ("已浏览", path.to_string())
-                }
-            }
-            other => {
-                if in_progress {
-                    ("调用", other.to_string())
-                } else {
-                    ("完成", other.to_string())
-                }
-            }
-        };
+    fn import_session_as_tab(&mut self, path: &str) -> Result<()> {
+        let data = session::import_session(std::path::Path::new(path))?;
+        let mut agent = Agent::create(&self.config, &self.project_root)?;
+        agent.set_messages(data.agent_messages);
+        agent.stats = data.stats.to_session_stats();
+        let mut tab = SessionTab::new(data.id, data.name.clone(), agent);
+        tab.messages = data.ui_messages;
+        tab.cached_stats = data.stats.to_session_stats();
+        self.tabs.push(tab);
+        self.active_tab = self.tabs.len() - 1;
+        self.active_mut()
+            .messages
+            .push(format!("[Imported session: {}]", data.name));
+        Ok(())
+    }
 
-        if in_progress {
-            format!("TOOL_PROGRESS:⚡ {} {} ...", action, target)
-        } else {
-            format!("TOOL_DONE:✓ {} {}", action, target)
+    fn handle_mouse_tab_click(&mut self, x: u16) {
+        let mut current_x = 0u16;
+        for (i, tab) in self.tabs.iter().enumerate() {
+            let label_width = if tab.processing {
+                tab.name.chars().count() + 4
+            } else {
+                tab.name.chars().count() + 2
+            } as u16;
+            if x >= current_x && x < current_x + label_width {
+                self.active_tab = i;
+                return;
+            }
+            current_x += label_width;
+            current_x += 3; // separator " │ "
         }
     }
 
-    fn tool_display_text_error(name: &str, arguments: &str) -> String {
-        let args: serde_json::Value =
-            serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null);
-
-        let target = match name {
-            "read_file" | "write_file" => args["path"].as_str().unwrap_or("?").to_string(),
-            "list_directory" => args["path"].as_str().unwrap_or(".").to_string(),
-            other => other.to_string(),
-        };
-
-        format!("TOOL_ERROR:✗ {} {} 失败", name, target)
-    }
-
-    fn handle_agent_event(&mut self, event: AgentEvent) {
-        match event {
-            AgentEvent::StreamDelta(delta) => {
-                if let Some(idx) = self.streaming_message_idx {
-                    self.messages[idx].push_str(&delta);
-                } else {
-                    self.messages.push(format!("Assistant: {}", delta));
-                    self.streaming_message_idx = Some(self.messages.len() - 1);
-                }
-                self.follow_tail = true;
-            }
-            AgentEvent::LlmText(text) => {
-                self.messages.push(format!(
-                    "  \u{1f4ad} {}",
-                    text.lines()
-                        .next()
-                        .unwrap_or("")
-                        .chars()
-                        .take(80)
-                        .collect::<String>()
-                ));
-                self.follow_tail = true;
-            }
-            AgentEvent::ToolStart { name, arguments } => {
-                self.streaming_message_idx = None;
-                let text = Self::tool_display_text(&name, &arguments, true);
-                self.messages.push(text);
-                self.tool_progress_idx = Some(self.messages.len() - 1);
-                self.follow_tail = true;
-            }
-            AgentEvent::ToolEnd {
-                name,
-                arguments,
-                success,
-            } => {
-                let text = if success {
-                    Self::tool_display_text(&name, &arguments, false)
-                } else {
-                    Self::tool_display_text_error(&name, &arguments)
-                };
-                if let Some(idx) = self.tool_progress_idx.take() {
-                    self.messages[idx] = text;
-                } else {
-                    self.messages.push(text);
-                }
-                self.follow_tail = true;
-            }
-            AgentEvent::Done(response) => {
-                self.tool_progress_idx = None;
-                if self.streaming_message_idx.is_some() {
-                    self.streaming_message_idx = None;
-                } else if !response.is_empty() {
-                    self.messages.push(format!("Assistant: {}", response));
-                }
-                self.pet_state = PetState::Happy;
-                self.processing = false;
-                self.idle_ticks = 0;
-                self.follow_tail = true;
-            }
-            AgentEvent::Error(e) => {
-                self.streaming_message_idx = None;
-                self.tool_progress_idx = None;
-                self.messages.push(format!("Error: {}", e));
-                self.pet_state = PetState::Error;
-                self.processing = false;
-                self.idle_ticks = 0;
-                self.follow_tail = true;
-            }
-        }
-    }
-
-    pub async fn run(mut self, agent: Agent) -> Result<(Agent, UiExitAction)> {
+    pub async fn run(mut self, agent: Agent) -> Result<UiExitAction> {
         let _ = terminal::disable_raw_mode();
         while event::poll(std::time::Duration::from_millis(5))? {
             let _ = event::read()?;
         }
 
+        crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)?;
+
         let mut terminal = ratatui::init();
         let _guard = TerminalGuard;
         let exit_action;
 
-        self.cached_stats = agent.stats.clone();
-
-        let mut event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<AgentEvent>> = None;
-        let mut agent_handle: Option<tokio::task::JoinHandle<Result<Agent>>> = None;
-        let mut agent_opt: Option<Agent> = Some(agent);
+        let id = session::generate_session_id();
+        self.tabs
+            .push(SessionTab::new(id, "Session 1".into(), agent));
 
         loop {
             self.anim_tick = self.anim_tick.wrapping_add(1);
-            let stats_snapshot = self.cached_stats.clone();
-            terminal.draw(|f| self.draw_ui(f, &stats_snapshot))?;
+            terminal.draw(|f| self.draw_ui(f))?;
 
-            if let Some(rx) = &mut event_rx {
-                while let Ok(evt) = rx.try_recv() {
-                    let is_terminal = matches!(evt, AgentEvent::Done(_) | AgentEvent::Error(_));
-                    self.handle_agent_event(evt);
-                    if is_terminal {
-                        if let Some(handle) = agent_handle.take() {
+            // Process events for ALL tabs
+            for tab in &mut self.tabs {
+                let mut rx_taken = tab.event_rx.take();
+                if let Some(rx) = &mut rx_taken {
+                    let mut terminal_reached = false;
+                    while let Ok(evt) = rx.try_recv() {
+                        let is_terminal = matches!(evt, AgentEvent::Done(_) | AgentEvent::Error(_));
+                        tab.handle_agent_event(evt);
+                        if is_terminal {
+                            terminal_reached = true;
+                            break;
+                        }
+                    }
+                    if terminal_reached {
+                        if let Some(handle) = tab.agent_handle.take() {
                             match handle.await {
                                 Ok(Ok(returned_agent)) => {
-                                    self.cached_stats = returned_agent.stats.clone();
-                                    agent_opt = Some(returned_agent);
+                                    tab.cached_stats = returned_agent.stats.clone();
+                                    tab.agent = Some(returned_agent);
                                 }
                                 Ok(Err(e)) => {
-                                    self.messages.push(format!("Error: {}", e));
-                                    self.pet_state = PetState::Error;
-                                    self.processing = false;
+                                    tab.messages.push(format!("Error: {}", e));
+                                    tab.pet_state = PetState::Error;
+                                    tab.processing = false;
                                 }
                                 Err(e) => {
-                                    self.messages.push(format!("Error: task panicked: {}", e));
-                                    self.pet_state = PetState::Error;
-                                    self.processing = false;
+                                    tab.messages.push(format!("Error: task panicked: {}", e));
+                                    tab.pet_state = PetState::Error;
+                                    tab.processing = false;
                                 }
                             }
                         }
-                        event_rx = None;
-                        break;
+                        // rx dropped (not put back)
+                    } else {
+                        tab.event_rx = rx_taken;
                     }
                 }
             }
 
             if event::poll(std::time::Duration::from_millis(100))? {
-                if let Event::Key(key) = event::read()? {
-                    if !self.processing {
-                        self.idle_ticks = 0;
-                        self.typing_intensity = self
-                            .typing_intensity
-                            .saturating_add(TYPING_BOOST_PER_KEY)
-                            .min(40);
-                    }
+                match event::read()? {
+                    Event::Key(key) => {
+                        if !self.active().processing {
+                            self.idle_ticks = 0;
+                            self.typing_intensity = self
+                                .typing_intensity
+                                .saturating_add(TYPING_BOOST_PER_KEY)
+                                .min(40);
+                        }
 
-                    match key.code {
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            exit_action = UiExitAction::Quit;
-                            break;
-                        }
-                        KeyCode::Esc if self.autocomplete.visible => {
-                            self.autocomplete.dismiss();
-                        }
-                        KeyCode::Up if self.autocomplete.visible => {
-                            self.autocomplete.move_up();
-                        }
-                        KeyCode::Down if self.autocomplete.visible => {
-                            self.autocomplete.move_down();
-                        }
-                        KeyCode::Tab if self.autocomplete.visible => {
-                            self.apply_autocomplete_selection();
-                        }
-                        KeyCode::Enter => {
-                            if self.autocomplete.visible {
-                                if let Some(ref mut agent) = agent_opt {
+                        match key.code {
+                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                exit_action = UiExitAction::Quit;
+                                break;
+                            }
+                            // Ctrl+Left/Right to switch tabs
+                            KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if self.active_tab > 0 {
+                                    self.active_tab -= 1;
+                                }
+                            }
+                            KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if self.active_tab + 1 < self.tabs.len() {
+                                    self.active_tab += 1;
+                                }
+                            }
+                            KeyCode::Esc if self.autocomplete.visible => {
+                                self.autocomplete.dismiss();
+                            }
+                            KeyCode::Up if self.autocomplete.visible => {
+                                self.autocomplete.move_up();
+                            }
+                            KeyCode::Down if self.autocomplete.visible => {
+                                self.autocomplete.move_down();
+                            }
+                            KeyCode::Tab if self.autocomplete.visible => {
+                                self.apply_autocomplete_selection();
+                            }
+                            KeyCode::Enter => {
+                                if self.autocomplete.visible {
                                     self.apply_autocomplete_selection();
                                     let user_input = self.input.clone();
                                     self.input.clear();
                                     self.cursor_position = 0;
                                     self.autocomplete.dismiss();
-                                    if let Some(action) = self.handle_command(&user_input, agent) {
-                                        exit_action = action;
-                                        break;
-                                    }
-                                }
-                                continue;
-                            }
-
-                            if !self.input.trim().is_empty() && !self.processing {
-                                let user_input = self.input.clone();
-                                self.input.clear();
-                                self.cursor_position = 0;
-                                self.autocomplete.dismiss();
-
-                                if is_slash_command(&user_input) {
-                                    if let Some(ref mut agent) = agent_opt {
-                                        if let Some(action) =
-                                            self.handle_command(&user_input, agent)
-                                        {
+                                    if is_slash_command(&user_input) {
+                                        if let Some(action) = self.handle_command(&user_input) {
                                             exit_action = action;
                                             break;
                                         }
@@ -1262,67 +1608,102 @@ impl RatatuiUi {
                                     continue;
                                 }
 
-                                self.messages.push(format!("You: {}", user_input));
-                                self.processing = true;
-                                self.pet_state = PetState::Thinking;
-                                self.idle_ticks = 0;
-                                self.follow_tail = true;
+                                if !self.input.trim().is_empty() && !self.active().processing {
+                                    let user_input = self.input.clone();
+                                    self.input.clear();
+                                    self.cursor_position = 0;
+                                    self.autocomplete.dismiss();
 
-                                if let Some(mut moved_agent) = agent_opt.take() {
-                                    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-                                    event_rx = Some(rx);
-                                    let input_clone = user_input.clone();
-                                    agent_handle = Some(tokio::spawn(async move {
-                                        let result = moved_agent
-                                            .process_message(&input_clone, Some(tx))
-                                            .await;
-                                        result.map(|_| moved_agent)
-                                    }));
+                                    if is_slash_command(
+                                        user_input.split_whitespace().next().unwrap_or(""),
+                                    ) {
+                                        if let Some(action) = self.handle_command(&user_input) {
+                                            exit_action = action;
+                                            break;
+                                        }
+                                        continue;
+                                    }
+
+                                    let tab = self.active_mut();
+                                    tab.messages.push(format!("You: {}", user_input));
+                                    tab.processing = true;
+                                    tab.pet_state = PetState::Thinking;
+                                    tab.follow_tail = true;
+
+                                    if let Some(mut moved_agent) = tab.agent.take() {
+                                        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                                        tab.event_rx = Some(rx);
+                                        let input_clone = user_input.clone();
+                                        tab.agent_handle = Some(tokio::spawn(async move {
+                                            let result = moved_agent
+                                                .process_message(&input_clone, Some(tx))
+                                                .await;
+                                            result.map(|_| moved_agent)
+                                        }));
+                                    }
+                                }
+                            }
+                            KeyCode::Up if !self.active().processing => {
+                                self.active_mut().follow_tail = false;
+                                let off = self.active().scroll_offset;
+                                self.active_mut().scroll_offset = off.saturating_sub(1);
+                            }
+                            KeyCode::Down if !self.active().processing => {
+                                self.active_mut().scroll_offset += 1;
+                            }
+                            _ => {
+                                if !self.active().processing {
+                                    self.handle_key_event(key);
                                 }
                             }
                         }
-                        KeyCode::Up if !self.processing => {
-                            self.follow_tail = false;
-                            self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                        }
-                        KeyCode::Down if !self.processing => {
-                            self.scroll_offset += 1;
-                        }
-                        _ => {
-                            if !self.processing {
-                                self.handle_key_event(key);
+                    }
+                    Event::Mouse(mouse) => {
+                        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                            let tab_bar = self.tab_bar_rect;
+                            if self.tabs.len() > 1
+                                && mouse.row == tab_bar.y
+                                && mouse.column >= tab_bar.x
+                                && mouse.column < tab_bar.x + tab_bar.width
+                            {
+                                self.handle_mouse_tab_click(mouse.column - tab_bar.x);
                             }
                         }
                     }
+                    _ => {}
                 }
-            } else if !self.processing {
+            } else if !self.active().processing {
                 self.idle_ticks += 1;
                 self.typing_intensity = self.typing_intensity.saturating_sub(TYPING_DECAY_PER_TICK);
             }
 
-            // Pet state machine
-            if !self.processing {
-                if self.typing_intensity > TYPING_FAST_THRESHOLD {
-                    self.pet_state = PetState::TypingFast;
-                } else if self.typing_intensity > 0 && !self.input.is_empty() {
-                    self.pet_state = PetState::Typing;
-                } else if self.idle_ticks > 300 {
-                    self.pet_state = PetState::Sleeping;
-                } else if ((self.pet_state == PetState::Happy || self.pet_state == PetState::Error)
-                    && self.idle_ticks > 50)
-                    || ((self.pet_state == PetState::Typing
-                        || self.pet_state == PetState::TypingFast)
-                        && self.typing_intensity == 0)
-                {
-                    self.pet_state = PetState::Idle;
+            // Pet state machine for active tab
+            {
+                let ti = self.typing_intensity;
+                let idle = self.idle_ticks;
+                let input_empty = self.input.is_empty();
+                let tab = &mut self.tabs[self.active_tab];
+                if !tab.processing {
+                    if ti > TYPING_FAST_THRESHOLD {
+                        tab.pet_state = PetState::TypingFast;
+                    } else if ti > 0 && !input_empty {
+                        tab.pet_state = PetState::Typing;
+                    } else if idle > 300 {
+                        tab.pet_state = PetState::Sleeping;
+                    } else if ((tab.pet_state == PetState::Happy
+                        || tab.pet_state == PetState::Error)
+                        && idle > 50)
+                        || ((tab.pet_state == PetState::Typing
+                            || tab.pet_state == PetState::TypingFast)
+                            && ti == 0)
+                    {
+                        tab.pet_state = PetState::Idle;
+                    }
                 }
             }
         }
 
         drop(_guard);
-        let agent = agent_opt.unwrap_or_else(|| {
-            panic!("Agent was not returned from background task");
-        });
-        Ok((agent, exit_action))
+        Ok(exit_action)
     }
 }
