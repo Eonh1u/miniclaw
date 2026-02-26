@@ -23,9 +23,13 @@ pub enum AgentEvent {
     /// Intermediate text from LLM emitted alongside tool_calls (non-streaming fallback).
     LlmText(String),
     /// A tool is about to be executed.
-    ToolStart { name: String },
+    ToolStart { name: String, arguments: String },
     /// A tool finished executing.
-    ToolEnd { name: String, success: bool },
+    ToolEnd {
+        name: String,
+        arguments: String,
+        success: bool,
+    },
     /// Final response ready (content may be empty if already streamed).
     Done(String),
     /// An error occurred.
@@ -153,6 +157,7 @@ impl Agent {
                 for tool_call in &response.tool_calls {
                     emit(AgentEvent::ToolStart {
                         name: tool_call.name.clone(),
+                        arguments: tool_call.arguments.clone(),
                     });
 
                     let result = self
@@ -167,6 +172,7 @@ impl Agent {
 
                     emit(AgentEvent::ToolEnd {
                         name: tool_call.name.clone(),
+                        arguments: tool_call.arguments.clone(),
                         success,
                     });
 

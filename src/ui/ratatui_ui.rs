@@ -593,6 +593,7 @@ pub struct RatatuiUi {
     autocomplete: SlashAutocomplete,
     cached_stats: crate::agent::SessionStats,
     streaming_message_idx: Option<usize>,
+    tool_progress_idx: Option<usize>,
 }
 
 impl RatatuiUi {
@@ -623,6 +624,7 @@ impl RatatuiUi {
             autocomplete: SlashAutocomplete::new(),
             cached_stats: crate::agent::SessionStats::default(),
             streaming_message_idx: None,
+            tool_progress_idx: None,
         }
     }
 
@@ -759,6 +761,23 @@ impl RatatuiUi {
                 )));
                 let md_lines = crate::ui::markdown::markdown_to_lines(rest);
                 text_lines.extend(md_lines);
+            } else if let Some(rest) = msg.strip_prefix("TOOL_PROGRESS:") {
+                text_lines.push(Line::from(Span::styled(
+                    format!("  {}", rest),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::ITALIC),
+                )));
+            } else if let Some(rest) = msg.strip_prefix("TOOL_DONE:") {
+                text_lines.push(Line::from(Span::styled(
+                    format!("  {}", rest),
+                    Style::default().fg(Color::Cyan),
+                )));
+            } else if let Some(rest) = msg.strip_prefix("TOOL_ERROR:") {
+                text_lines.push(Line::from(Span::styled(
+                    format!("  {}", rest),
+                    Style::default().fg(Color::Red),
+                )));
             } else {
                 text_lines.push(Line::from(msg.clone()));
                 text_lines.push(Line::from(""));
@@ -1003,6 +1022,64 @@ impl RatatuiUi {
         None
     }
 
+    fn tool_display_text(name: &str, arguments: &str, in_progress: bool) -> String {
+        let args: serde_json::Value =
+            serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null);
+
+        let (action, target) = match name {
+            "read_file" => {
+                let path = args["path"].as_str().unwrap_or("?");
+                if in_progress {
+                    ("读取文件", path.to_string())
+                } else {
+                    ("已读取", path.to_string())
+                }
+            }
+            "write_file" => {
+                let path = args["path"].as_str().unwrap_or("?");
+                if in_progress {
+                    ("写入文件", path.to_string())
+                } else {
+                    ("已写入", path.to_string())
+                }
+            }
+            "list_directory" => {
+                let path = args["path"].as_str().unwrap_or(".");
+                if in_progress {
+                    ("浏览目录", path.to_string())
+                } else {
+                    ("已浏览", path.to_string())
+                }
+            }
+            other => {
+                if in_progress {
+                    ("调用", other.to_string())
+                } else {
+                    ("完成", other.to_string())
+                }
+            }
+        };
+
+        if in_progress {
+            format!("TOOL_PROGRESS:⚡ {} {} ...", action, target)
+        } else {
+            format!("TOOL_DONE:✓ {} {}", action, target)
+        }
+    }
+
+    fn tool_display_text_error(name: &str, arguments: &str) -> String {
+        let args: serde_json::Value =
+            serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null);
+
+        let target = match name {
+            "read_file" | "write_file" => args["path"].as_str().unwrap_or("?").to_string(),
+            "list_directory" => args["path"].as_str().unwrap_or(".").to_string(),
+            other => other.to_string(),
+        };
+
+        format!("TOOL_ERROR:✗ {} {} 失败", name, target)
+    }
+
     fn handle_agent_event(&mut self, event: AgentEvent) {
         match event {
             AgentEvent::StreamDelta(delta) => {
@@ -1026,19 +1103,32 @@ impl RatatuiUi {
                 ));
                 self.follow_tail = true;
             }
-            AgentEvent::ToolStart { name } => {
+            AgentEvent::ToolStart { name, arguments } => {
                 self.streaming_message_idx = None;
-                self.messages.push(format!("  \u{26a1} 调用 {} ...", name));
+                let text = Self::tool_display_text(&name, &arguments, true);
+                self.messages.push(text);
+                self.tool_progress_idx = Some(self.messages.len() - 1);
                 self.follow_tail = true;
             }
-            AgentEvent::ToolEnd { name, success } => {
-                let icon = if success { "\u{2713}" } else { "\u{2717}" };
-                let status = if success { "完成" } else { "失败" };
-                self.messages
-                    .push(format!("  {} {} {}", icon, name, status));
+            AgentEvent::ToolEnd {
+                name,
+                arguments,
+                success,
+            } => {
+                let text = if success {
+                    Self::tool_display_text(&name, &arguments, false)
+                } else {
+                    Self::tool_display_text_error(&name, &arguments)
+                };
+                if let Some(idx) = self.tool_progress_idx.take() {
+                    self.messages[idx] = text;
+                } else {
+                    self.messages.push(text);
+                }
                 self.follow_tail = true;
             }
             AgentEvent::Done(response) => {
+                self.tool_progress_idx = None;
                 if self.streaming_message_idx.is_some() {
                     self.streaming_message_idx = None;
                 } else if !response.is_empty() {
@@ -1051,6 +1141,7 @@ impl RatatuiUi {
             }
             AgentEvent::Error(e) => {
                 self.streaming_message_idx = None;
+                self.tool_progress_idx = None;
                 self.messages.push(format!("Error: {}", e));
                 self.pet_state = PetState::Error;
                 self.processing = false;
