@@ -819,6 +819,28 @@ fn tool_display_text(name: &str, arguments: &str, in_progress: bool) -> String {
                 ("已浏览", path.to_string())
             }
         }
+        "edit" => {
+            let path = args["path"].as_str().unwrap_or("?");
+            if in_progress {
+                ("编辑文件", path.to_string())
+            } else {
+                ("已编辑", path.to_string())
+            }
+        }
+        "bash" => {
+            let cmd = args["command"].as_str().unwrap_or("?");
+            let short: String = cmd.chars().take(40).collect();
+            let display = if cmd.len() > 40 {
+                format!("{}...", short)
+            } else {
+                short
+            };
+            if in_progress {
+                ("执行命令", display)
+            } else {
+                ("已执行", display)
+            }
+        }
         other => {
             if in_progress {
                 ("调用", other.to_string())
@@ -838,8 +860,12 @@ fn tool_display_text_error(name: &str, arguments: &str) -> String {
     let args: serde_json::Value =
         serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null);
     let target = match name {
-        "read_file" | "write_file" => args["path"].as_str().unwrap_or("?").to_string(),
+        "read_file" | "write_file" | "edit" => args["path"].as_str().unwrap_or("?").to_string(),
         "list_directory" => args["path"].as_str().unwrap_or(".").to_string(),
+        "bash" => {
+            let cmd = args["command"].as_str().unwrap_or("?");
+            cmd.chars().take(40).collect()
+        }
         other => other.to_string(),
     };
     format!("TOOL_ERROR:✗ {} {} 失败", name, target)

@@ -41,7 +41,9 @@ miniclaw/
     ├── tools/
     │   ├── mod.rs            # Tool trait + ToolRouter
     │   ├── read_file.rs      # 读文件工具
-    │   ├── write_file.rs     # 写文件工具
+    │   ├── write_file.rs     # 写文件工具（创建/覆盖）
+    │   ├── edit.rs           # 编辑工具（精准文本替换）
+    │   ├── bash.rs           # Bash 工具（执行 shell 命令）
     │   └── list_directory.rs # 列目录工具
     └── ui/
         ├── mod.rs            # HeaderWidget trait + WidgetContext
@@ -86,13 +88,15 @@ miniclaw/
 - [x] `write_file` 工具 —— 已注册，含单元测试
 - [x] `list_directory` 工具 —— 已实现并注册（支持递归遍历、深度限制、文件大小显示），含单元测试
 - [x] `ToolRouter` 单元测试（注册、路由、错误分发）
-- [ ] `exec_command` 工具 —— 未实现
+- [x] `bash` 工具 —— 执行 shell 命令，超时控制，输出截断，含单元测试
+- [x] `edit` 工具 —— 精准文本替换（old_text 精确匹配），支持 replace_all，含单元测试
 
 ### 阶段 5：丰富工具集 🔶 进行中
 
 - [x] 将 `write_file` 注册到 `create_default_router()`
 - [x] 实现 `list_directory`（列出目录内容，支持递归/深度限制/大小显示）
-- [ ] 实现 `exec_command`（执行 shell 命令，需要安全确认机制）
+- [x] 实现 `bash`（执行 shell 命令，超时控制，输出截断）
+- [x] 实现 `edit`（精准文本替换，old_text 精确匹配，支持 replace_all）
 - [ ] 实现 `web_search`（网页搜索）
 - [ ] 工具权限/用户确认机制（危险操作前询问用户）
 - [ ] 配置中 `tools.enabled` 列表实际生效（目前未过滤）
@@ -200,6 +204,7 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-26 | 新增 `bash` 和 `edit` 工具：`bash` 执行 shell 命令（超时控制、输出截断）；`edit` 精准文本替换（old_text 精确匹配、支持 replace_all）；工具进度显示支持命令预览和文件路径；15 个新单元测试（共 50 个） |
 | 2026-02-26 | 输入体验升级：多行输入（Ctrl+J/Alt+Enter 换行）；待发送消息队列（处理中可排队）；每个会话独立输入框；对话滚动改进（PageUp/Down、鼠标滚轮、scroll_offset 同步修复） |
 | 2026-02-26 | 分屏展示 + 自动保存：多会话左右分屏同时展示（活动会话青色边框，鼠标点击切换焦点）；会话自动持久化（用户输入/AI 输出/退出时自动保存到 `~/.miniclaw/sessions/`，防止非正常退出丢失数据） |
 | 2026-02-26 | 多会话标签页 + 对话持久化：新增 `src/session.rs` 模块（JSON 持久化）；重构 TUI 为 `SessionTab` 多会话架构；标签栏 UI（鼠标点击 + Ctrl+Left/Right 切换）；新增命令 `/new`、`/close`、`/rename`、`/save`、`/load`、`/sessions`、`/export`、`/import`；`Agent::create()` 工厂方法；4 个新单元测试（共 35 个） |
