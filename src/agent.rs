@@ -1,5 +1,7 @@
 //! Agent Loop - the core of the AI assistant.
 
+#![allow(dead_code)]
+
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -14,6 +16,7 @@ use crate::types::{ChatRequest, ChatResponse, Message, StreamChunk, TokenUsage};
 /// Events emitted by the Agent during processing, allowing the TUI
 /// to display real-time progress (tool calls, intermediate text, etc.).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum AgentEvent {
     /// Incremental text chunk from streaming LLM response.
     StreamDelta(String),
@@ -63,8 +66,7 @@ impl Agent {
         project_root: &Path,
     ) -> Self {
         let system_prompt = Self::build_system_prompt(&config, project_root);
-        let mut messages = Vec::new();
-        messages.push(Message::system(&system_prompt));
+        let messages = vec![Message::system(&system_prompt)];
         Self {
             llm,
             tool_router,

@@ -784,7 +784,7 @@ impl RatatuiUi {
                             .sum::<usize>()
                     })
                     .sum();
-                1usize.max((width + wrap_width - 1) / wrap_width)
+                1usize.max(width.div_ceil(wrap_width))
             })
             .sum()
     }
@@ -1204,12 +1204,10 @@ impl RatatuiUi {
                         }
                     }
                 }
-            } else {
-                if !self.processing {
-                    self.idle_ticks += 1;
-                    self.typing_intensity =
-                        self.typing_intensity.saturating_sub(TYPING_DECAY_PER_TICK);
-                }
+            } else if !self.processing {
+                self.idle_ticks += 1;
+                self.typing_intensity =
+                    self.typing_intensity.saturating_sub(TYPING_DECAY_PER_TICK);
             }
 
             // Pet state machine
@@ -1220,13 +1218,11 @@ impl RatatuiUi {
                     self.pet_state = PetState::Typing;
                 } else if self.idle_ticks > 300 {
                     self.pet_state = PetState::Sleeping;
-                } else if self.pet_state == PetState::Happy && self.idle_ticks > 50 {
-                    self.pet_state = PetState::Idle;
-                } else if self.pet_state == PetState::Error && self.idle_ticks > 50 {
-                    self.pet_state = PetState::Idle;
-                } else if (self.pet_state == PetState::Typing
-                    || self.pet_state == PetState::TypingFast)
-                    && self.typing_intensity == 0
+                } else if ((self.pet_state == PetState::Happy || self.pet_state == PetState::Error)
+                    && self.idle_ticks > 50)
+                    || ((self.pet_state == PetState::Typing
+                        || self.pet_state == PetState::TypingFast)
+                        && self.typing_intensity == 0)
                 {
                     self.pet_state = PetState::Idle;
                 }
