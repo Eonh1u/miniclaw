@@ -27,6 +27,10 @@ Requires `LLM_API_KEY` env var (or `api_key` in `~/.miniclaw/config.toml`). With
 
 Auto-generated at `~/.miniclaw/config.toml` on first run. Default provider is Qwen (DashScope). Provider/model can also be overridden via env vars `MINICLAW_PROVIDER`, `MINICLAW_MODEL`, `MINICLAW_API_BASE`.
 
+### Git commit conventions
+
+When merging feature branch commits to `main`, squash all related changes (code + docs + tests) for the same feature into a single commit. Keep `main` history clean with one commit per feature/fix. On the feature branch itself, multiple small commits are fine.
+
 ### Hello world verification
 
 To verify the app works end-to-end, launch it in a graphical terminal with a valid `LLM_API_KEY`, send a chat message (e.g. "你好"), and then ask it to use a tool (e.g. "请读取 Cargo.toml 文件"). You should see streaming text output and tool call progress indicators (`⚡ 调用 xxx ...` / `✓ xxx 完成`).
