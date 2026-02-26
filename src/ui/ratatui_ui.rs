@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::terminal;
+use futures_util::FutureExt;
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -1932,14 +1933,12 @@ impl RatatuiUi {
                 self.typing_intensity = self.typing_intensity.saturating_sub(TYPING_DECAY_PER_TICK);
             }
 
-            // Poll title generation tasks for all tabs
+            // Poll title generation tasks for all tabs (non-blocking)
             for tab in &mut self.tabs {
-                if let Some(handle) = &mut tab.title_task {
+                if let Some(handle) = &tab.title_task {
                     if handle.is_finished() {
                         if let Some(task) = tab.title_task.take() {
-                            if let Ok(Some(title)) =
-                                tokio::runtime::Handle::current().block_on(task)
-                            {
+                            if let Some(Ok(Some(title))) = task.now_or_never() {
                                 tab.name = title;
                             }
                         }
