@@ -174,9 +174,17 @@ impl SlashAutocomplete {
     }
 }
 
-struct TerminalGuard;
+struct TerminalGuard {
+    keyboard_enhanced: bool,
+}
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        if self.keyboard_enhanced {
+            let _ = crossterm::execute!(
+                std::io::stdout(),
+                crossterm::event::PopKeyboardEnhancementFlags
+            );
+        }
         let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
         ratatui::restore();
     }
@@ -1629,7 +1637,7 @@ impl RatatuiUi {
                     "  /pet               Toggle pet panel",
                     "  /quit              Exit the program",
                     "",
-                    "  Alt+N              Insert newline (multi-line input)",
+                    "  Shift+Enter/Alt+N  Insert newline (multi-line input)",
                     "  Ctrl+Left/Right    Switch session tabs",
                     "  PageUp/PageDown    Scroll conversation",
                     "  Shift+mouse drag   Select and copy text",
@@ -1706,8 +1714,17 @@ impl RatatuiUi {
 
         crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)?;
 
+        let keyboard_enhanced = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::event::PushKeyboardEnhancementFlags(
+                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | crossterm::event::KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+            )
+        )
+        .is_ok();
+
         let mut terminal = ratatui::init();
-        let _guard = TerminalGuard;
+        let _guard = TerminalGuard { keyboard_enhanced };
         let exit_action;
 
         let id = session::generate_session_id();
