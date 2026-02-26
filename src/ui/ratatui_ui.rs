@@ -176,7 +176,11 @@ impl SlashAutocomplete {
 struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::event::DisableMouseCapture,
+            crossterm::event::PopKeyboardEnhancementFlags
+        );
         ratatui::restore();
     }
 }
@@ -881,12 +885,19 @@ impl RatatuiUi {
         }
     }
 
+    fn clamp_active_tab(&mut self) {
+        if !self.tabs.is_empty() && self.active_tab >= self.tabs.len() {
+            self.active_tab = self.tabs.len() - 1;
+        }
+    }
+
     fn active(&self) -> &SessionTab {
-        &self.tabs[self.active_tab]
+        &self.tabs[self.active_tab.min(self.tabs.len() - 1)]
     }
 
     fn active_mut(&mut self) -> &mut SessionTab {
-        &mut self.tabs[self.active_tab]
+        let idx = self.active_tab.min(self.tabs.len() - 1);
+        &mut self.tabs[idx]
     }
 
     fn create_new_tab(&mut self, name: Option<String>) -> Result<()> {
@@ -1089,12 +1100,13 @@ impl RatatuiUi {
         f.render_widget(widget, area);
     }
 
-    fn render_conversations(&mut self, f: &mut Frame, area: Rect) {
+    fn render_sessions(&mut self, f: &mut Frame, area: Rect) {
         let tab_count = self.tabs.len();
-        let active = self.active_tab;
+        let active = self.active_tab.min(tab_count.saturating_sub(1));
+
         if tab_count == 1 {
             self.session_rects = vec![area];
-            Self::render_single_conversation(&mut self.tabs[0], true, f, area);
+            Self::render_session_panel(&mut self.tabs[0], true, f, area);
             return;
         }
 
@@ -1108,16 +1120,21 @@ impl RatatuiUi {
 
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             let is_active = i == active;
-            Self::render_single_conversation(tab, is_active, f, cols[i]);
+            Self::render_session_panel(tab, is_active, f, cols[i]);
         }
     }
 
-    fn render_single_conversation(
-        tab: &mut SessionTab,
-        is_active: bool,
-        f: &mut Frame,
-        area: Rect,
-    ) {
+    fn render_session_panel(tab: &mut SessionTab, is_active: bool, f: &mut Frame, area: Rect) {
+        let input_line_count = tab.input.matches('\n').count() + 1;
+        let input_h = (input_line_count as u16 + 2).max(3).min(8);
+
+        let rows = Layout::vertical([Constraint::Min(3), Constraint::Length(input_h)]).split(area);
+
+        Self::render_conversation(tab, is_active, f, rows[0]);
+        Self::render_session_input(tab, is_active, f, rows[1]);
+    }
+
+    fn render_conversation(tab: &mut SessionTab, is_active: bool, f: &mut Frame, area: Rect) {
         let text_lines = Self::build_conversation_lines(&tab.messages);
         let visible_height = area.height.saturating_sub(2) as usize;
         let wrap_width = area.width.saturating_sub(2) as usize;
@@ -1165,25 +1182,40 @@ impl RatatuiUi {
         f.render_widget(p, area);
     }
 
-    fn render_input(&self, f: &mut Frame, area: Rect) {
-        let tab = self.active();
+    fn render_session_input(tab: &SessionTab, is_active: bool, f: &mut Frame, area: Rect) {
+        let border_color = if is_active {
+            Color::Cyan
+        } else {
+            Color::DarkGray
+        };
         let pending_hint = if !tab.pending_messages.is_empty() {
             format!(" [{} pending]", tab.pending_messages.len())
         } else {
             String::new()
         };
-        let title = format!("Input (Ctrl+J newline){}", pending_hint);
+        let title = if is_active {
+            format!("Input{}", pending_hint)
+        } else {
+            format!("Input{}", pending_hint)
+        };
 
         let p = Paragraph::new(tab.input.as_str())
-            .block(Block::default().borders(Borders::ALL).title(title))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .border_style(Style::default().fg(border_color)),
+            )
             .wrap(Wrap { trim: false });
         f.render_widget(p, area);
 
-        let (cursor_row, cursor_col) = Self::cursor_row_col(&tab.input, tab.cursor_position);
-        f.set_cursor_position((
-            area.x + cursor_col as u16 + 1,
-            area.y + cursor_row as u16 + 1,
-        ));
+        if is_active {
+            let (cursor_row, cursor_col) = Self::cursor_row_col(&tab.input, tab.cursor_position);
+            f.set_cursor_position((
+                area.x + cursor_col as u16 + 1,
+                area.y + cursor_row as u16 + 1,
+            ));
+        }
     }
 
     fn cursor_row_col(input: &str, cursor_pos: usize) -> (usize, usize) {
@@ -1199,12 +1231,6 @@ impl RatatuiUi {
             .map(|c| if c.is_ascii() { 1 } else { 2 })
             .sum();
         (row, col)
-    }
-
-    fn input_area_height(&self) -> u16 {
-        let tab = self.active();
-        let line_count = tab.input.matches('\n').count() + 1;
-        (line_count as u16 + 2).max(3).min(8)
     }
 
     fn render_autocomplete(&self, f: &mut Frame, input_area: Rect) {
@@ -1302,6 +1328,7 @@ impl RatatuiUi {
     }
 
     fn draw_ui(&mut self, f: &mut Frame) {
+        self.clamp_active_tab();
         let area = f.area();
         let header_h = if self.header_widgets.is_empty() {
             0
@@ -1310,13 +1337,11 @@ impl RatatuiUi {
         };
         let show_tabs = self.tabs.len() > 1;
         let tab_h = if show_tabs { TAB_BAR_HEIGHT } else { 0 };
-        let input_h = self.input_area_height();
 
         let rows = Layout::vertical([
             Constraint::Length(header_h),
             Constraint::Length(tab_h),
             Constraint::Min(4),
-            Constraint::Length(input_h),
         ])
         .split(area);
 
@@ -1326,9 +1351,25 @@ impl RatatuiUi {
         if show_tabs {
             self.render_tab_bar(f, rows[1]);
         }
-        self.render_conversations(f, rows[2]);
-        self.render_input(f, rows[3]);
-        self.render_autocomplete(f, rows[3]);
+        self.render_sessions(f, rows[2]);
+
+        // Autocomplete popup relative to active session's input area
+        if self.autocomplete.visible && !self.tabs.is_empty() {
+            let active_idx = self.active_tab.min(self.tabs.len() - 1);
+            if active_idx < self.session_rects.len() {
+                let sess_rect = self.session_rects[active_idx];
+                let tab = &self.tabs[active_idx];
+                let input_line_count = tab.input.matches('\n').count() + 1;
+                let input_h = (input_line_count as u16 + 2).max(3).min(8);
+                let input_area = Rect {
+                    x: sess_rect.x,
+                    y: sess_rect.y + sess_rect.height - input_h,
+                    width: sess_rect.width,
+                    height: input_h,
+                };
+                self.render_autocomplete(f, input_area);
+            }
+        }
     }
 
     fn handle_command(&mut self, cmd: &str) -> Option<UiExitAction> {
@@ -1533,7 +1574,7 @@ impl RatatuiUi {
                     "  /pet               Toggle pet panel",
                     "  /quit              Exit the program",
                     "",
-                    "  Ctrl+J / Alt+Enter Multi-line input (newline)",
+                    "  Shift+Enter        Multi-line input (newline)",
                     "  Ctrl+Left/Right    Switch session tabs",
                     "  PageUp/PageDown    Scroll conversation",
                     "  Ctrl+C             Exit the program",
@@ -1607,7 +1648,13 @@ impl RatatuiUi {
             let _ = event::read()?;
         }
 
-        crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)?;
+        crossterm::execute!(
+            std::io::stdout(),
+            crossterm::event::EnableMouseCapture,
+            crossterm::event::PushKeyboardEnhancementFlags(
+                crossterm::event::KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+            )
+        )?;
 
         let mut terminal = ratatui::init();
         let _guard = TerminalGuard;
