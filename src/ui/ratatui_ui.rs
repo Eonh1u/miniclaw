@@ -1,6 +1,7 @@
 //! Modern TUI implementation using ratatui with pluggable header widgets
 //! and multi-session tab support.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -629,6 +630,9 @@ struct SessionTab {
     agent: Option<Agent>,
     event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<AgentEvent>>,
     agent_handle: Option<tokio::task::JoinHandle<Result<Agent>>>,
+    input: String,
+    cursor_position: usize,
+    pending_messages: VecDeque<String>,
 }
 
 impl SessionTab {
@@ -648,6 +652,39 @@ impl SessionTab {
             agent: Some(agent),
             event_rx: None,
             agent_handle: None,
+            input: String::new(),
+            cursor_position: 0,
+            pending_messages: VecDeque::new(),
+        }
+    }
+
+    fn byte_index(&self) -> usize {
+        self.input
+            .char_indices()
+            .nth(self.cursor_position)
+            .map_or(self.input.len(), |(i, _)| i)
+    }
+
+    fn char_count(&self) -> usize {
+        self.input.chars().count()
+    }
+
+    fn send_next_pending(&mut self) {
+        if let Some(msg) = self.pending_messages.pop_front() {
+            self.messages.push(format!("You: {}", msg));
+            self.processing = true;
+            self.pet_state = PetState::Thinking;
+            self.follow_tail = true;
+
+            if let Some(mut moved_agent) = self.agent.take() {
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                self.event_rx = Some(rx);
+                self.agent_handle = Some(tokio::spawn(async move {
+                    let result = moved_agent.process_message(&msg, Some(tx)).await;
+                    result.map(|_| moved_agent)
+                }));
+            }
+            self.auto_save();
         }
     }
 
@@ -681,7 +718,9 @@ impl SessionTab {
                     self.messages.push(format!("Assistant: {}", delta));
                     self.streaming_message_idx = Some(self.messages.len() - 1);
                 }
-                self.follow_tail = true;
+                if self.follow_tail {
+                    self.scroll_offset = usize::MAX;
+                }
             }
             AgentEvent::LlmText(text) => {
                 self.messages.push(format!(
@@ -693,14 +732,12 @@ impl SessionTab {
                         .take(80)
                         .collect::<String>()
                 ));
-                self.follow_tail = true;
             }
             AgentEvent::ToolStart { name, arguments } => {
                 self.streaming_message_idx = None;
                 let text = tool_display_text(&name, &arguments, true);
                 self.messages.push(text);
                 self.tool_progress_idx = Some(self.messages.len() - 1);
-                self.follow_tail = true;
             }
             AgentEvent::ToolEnd {
                 name,
@@ -717,7 +754,6 @@ impl SessionTab {
                 } else {
                     self.messages.push(text);
                 }
-                self.follow_tail = true;
             }
             AgentEvent::Done(response) => {
                 self.tool_progress_idx = None;
@@ -805,8 +841,6 @@ const TYPING_DECAY_PER_TICK: u32 = 1;
 const TYPING_BOOST_PER_KEY: u32 = 4;
 
 pub struct RatatuiUi {
-    input: String,
-    cursor_position: usize,
     anim_tick: u32,
     idle_ticks: u32,
     typing_intensity: u32,
@@ -832,8 +866,6 @@ impl RatatuiUi {
         }
 
         Self {
-            input: String::new(),
-            cursor_position: 0,
             anim_tick: 0,
             idle_ticks: 0,
             typing_intensity: 0,
@@ -880,103 +912,85 @@ impl RatatuiUi {
         }
     }
 
-    // --- UTF-8 safe cursor helpers ---
-
-    fn byte_index(&self) -> usize {
-        self.input
-            .char_indices()
-            .nth(self.cursor_position)
-            .map_or(self.input.len(), |(i, _)| i)
-    }
-
-    fn char_count(&self) -> usize {
-        self.input.chars().count()
-    }
-
-    fn cursor_display_width(&self) -> u16 {
-        self.input
-            .chars()
-            .take(self.cursor_position)
-            .map(|c| if c.is_ascii() { 1u16 } else { 2u16 })
-            .sum()
-    }
-
     fn handle_key_event(&mut self, key: KeyEvent) {
+        let tab = self.active_mut();
         match key.code {
             KeyCode::Char(c) => {
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     match c {
                         'u' => {
-                            self.input.clear();
-                            self.cursor_position = 0;
+                            tab.input.clear();
+                            tab.cursor_position = 0;
                         }
                         'k' => {
-                            let b = self.byte_index();
-                            self.input.drain(b..);
+                            let b = tab.byte_index();
+                            tab.input.drain(b..);
                         }
                         'w' => {
-                            let end = self.byte_index();
-                            self.move_cursor_start_of_word();
-                            let start = self.byte_index();
-                            self.input.drain(start..end);
+                            let end = tab.byte_index();
+                            let chars: Vec<char> = tab.input.chars().collect();
+                            while tab.cursor_position > 0
+                                && chars[tab.cursor_position - 1].is_whitespace()
+                            {
+                                tab.cursor_position -= 1;
+                            }
+                            while tab.cursor_position > 0
+                                && !chars[tab.cursor_position - 1].is_whitespace()
+                            {
+                                tab.cursor_position -= 1;
+                            }
+                            let start = tab.byte_index();
+                            tab.input.drain(start..end);
                         }
                         _ => {}
                     }
                 } else {
-                    let b = self.byte_index();
-                    self.input.insert(b, c);
-                    self.cursor_position += 1;
+                    let b = tab.byte_index();
+                    tab.input.insert(b, c);
+                    tab.cursor_position += 1;
                 }
             }
             KeyCode::Backspace => {
-                if self.cursor_position > 0 {
-                    self.cursor_position -= 1;
-                    let b = self.byte_index();
-                    self.input.remove(b);
+                if tab.cursor_position > 0 {
+                    tab.cursor_position -= 1;
+                    let b = tab.byte_index();
+                    tab.input.remove(b);
                 }
             }
             KeyCode::Delete => {
-                if self.cursor_position < self.char_count() {
-                    let b = self.byte_index();
-                    self.input.remove(b);
+                if tab.cursor_position < tab.char_count() {
+                    let b = tab.byte_index();
+                    tab.input.remove(b);
                 }
             }
-            KeyCode::Left => {
-                if self.cursor_position > 0 {
-                    self.cursor_position -= 1;
+            KeyCode::Left if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if tab.cursor_position > 0 {
+                    tab.cursor_position -= 1;
                 }
             }
-            KeyCode::Right => {
-                if self.cursor_position < self.char_count() {
-                    self.cursor_position += 1;
+            KeyCode::Right if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if tab.cursor_position < tab.char_count() {
+                    tab.cursor_position += 1;
                 }
             }
             KeyCode::Home => {
-                self.cursor_position = 0;
+                tab.cursor_position = 0;
             }
             KeyCode::End => {
-                self.cursor_position = self.char_count();
+                tab.cursor_position = tab.char_count();
             }
             _ => {}
         }
-        self.autocomplete.update_filter(&self.input);
+        let input_snapshot = self.active().input.clone();
+        self.autocomplete.update_filter(&input_snapshot);
     }
 
     fn apply_autocomplete_selection(&mut self) {
         if let Some(cmd) = self.autocomplete.selected_command() {
-            self.input = cmd.to_string();
-            self.cursor_position = self.input.chars().count();
+            let tab = self.active_mut();
+            tab.input = cmd.to_string();
+            tab.cursor_position = tab.input.chars().count();
             self.autocomplete.dismiss();
-        }
-    }
-
-    fn move_cursor_start_of_word(&mut self) {
-        let chars: Vec<char> = self.input.chars().collect();
-        while self.cursor_position > 0 && chars[self.cursor_position - 1].is_whitespace() {
-            self.cursor_position -= 1;
-        }
-        while self.cursor_position > 0 && !chars[self.cursor_position - 1].is_whitespace() {
-            self.cursor_position -= 1;
         }
     }
 
@@ -1077,9 +1091,10 @@ impl RatatuiUi {
 
     fn render_conversations(&mut self, f: &mut Frame, area: Rect) {
         let tab_count = self.tabs.len();
+        let active = self.active_tab;
         if tab_count == 1 {
             self.session_rects = vec![area];
-            Self::render_single_conversation(&self.tabs[0], true, f, area);
+            Self::render_single_conversation(&mut self.tabs[0], true, f, area);
             return;
         }
 
@@ -1091,24 +1106,33 @@ impl RatatuiUi {
         let cols = Layout::horizontal(constraints).split(area);
         self.session_rects = cols.to_vec();
 
-        for (i, tab) in self.tabs.iter().enumerate() {
-            let is_active = i == self.active_tab;
+        for (i, tab) in self.tabs.iter_mut().enumerate() {
+            let is_active = i == active;
             Self::render_single_conversation(tab, is_active, f, cols[i]);
         }
     }
 
-    fn render_single_conversation(tab: &SessionTab, is_active: bool, f: &mut Frame, area: Rect) {
+    fn render_single_conversation(
+        tab: &mut SessionTab,
+        is_active: bool,
+        f: &mut Frame,
+        area: Rect,
+    ) {
         let text_lines = Self::build_conversation_lines(&tab.messages);
         let visible_height = area.height.saturating_sub(2) as usize;
         let wrap_width = area.width.saturating_sub(2) as usize;
         let total_rendered = Self::estimate_rendered_lines(&text_lines, wrap_width);
         let max_scroll = total_rendered.saturating_sub(visible_height);
 
-        let scroll = if tab.follow_tail {
-            max_scroll
+        if tab.follow_tail {
+            tab.scroll_offset = max_scroll;
         } else {
-            tab.scroll_offset.min(max_scroll)
-        };
+            tab.scroll_offset = tab.scroll_offset.min(max_scroll);
+            if tab.scroll_offset >= max_scroll {
+                tab.follow_tail = true;
+            }
+        }
+        let scroll = tab.scroll_offset;
 
         let border_color = if is_active {
             Color::Cyan
@@ -1143,21 +1167,44 @@ impl RatatuiUi {
 
     fn render_input(&self, f: &mut Frame, area: Rect) {
         let tab = self.active();
-        let input_text = if tab.processing {
-            "Processing... Please wait."
+        let pending_hint = if !tab.pending_messages.is_empty() {
+            format!(" [{} pending]", tab.pending_messages.len())
         } else {
-            &self.input[..]
+            String::new()
         };
-        let p = Paragraph::new(input_text).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Input (Ctrl+C quit)"),
-        );
+        let title = format!("Input (Ctrl+J newline){}", pending_hint);
+
+        let p = Paragraph::new(tab.input.as_str())
+            .block(Block::default().borders(Borders::ALL).title(title))
+            .wrap(Wrap { trim: false });
         f.render_widget(p, area);
-        if !tab.processing {
-            let col = self.cursor_display_width();
-            f.set_cursor_position((area.x + col + 1, area.y + 1));
-        }
+
+        let (cursor_row, cursor_col) = Self::cursor_row_col(&tab.input, tab.cursor_position);
+        f.set_cursor_position((
+            area.x + cursor_col as u16 + 1,
+            area.y + cursor_row as u16 + 1,
+        ));
+    }
+
+    fn cursor_row_col(input: &str, cursor_pos: usize) -> (usize, usize) {
+        let before_cursor: String = input.chars().take(cursor_pos).collect();
+        let row = before_cursor.matches('\n').count();
+        let last_newline = before_cursor.rfind('\n');
+        let col_str = match last_newline {
+            Some(pos) => &before_cursor[pos + 1..],
+            None => &before_cursor,
+        };
+        let col: usize = col_str
+            .chars()
+            .map(|c| if c.is_ascii() { 1 } else { 2 })
+            .sum();
+        (row, col)
+    }
+
+    fn input_area_height(&self) -> u16 {
+        let tab = self.active();
+        let line_count = tab.input.matches('\n').count() + 1;
+        (line_count as u16 + 2).max(3).min(8)
     }
 
     fn render_autocomplete(&self, f: &mut Frame, input_area: Rect) {
@@ -1263,12 +1310,13 @@ impl RatatuiUi {
         };
         let show_tabs = self.tabs.len() > 1;
         let tab_h = if show_tabs { TAB_BAR_HEIGHT } else { 0 };
+        let input_h = self.input_area_height();
 
         let rows = Layout::vertical([
             Constraint::Length(header_h),
             Constraint::Length(tab_h),
             Constraint::Min(4),
-            Constraint::Length(3),
+            Constraint::Length(input_h),
         ])
         .split(area);
 
@@ -1485,7 +1533,9 @@ impl RatatuiUi {
                     "  /pet               Toggle pet panel",
                     "  /quit              Exit the program",
                     "",
+                    "  Ctrl+J / Alt+Enter Multi-line input (newline)",
                     "  Ctrl+Left/Right    Switch session tabs",
+                    "  PageUp/PageDown    Scroll conversation",
                     "  Ctrl+C             Exit the program",
                 ];
                 for line in help {
@@ -1604,6 +1654,9 @@ impl RatatuiUi {
                             }
                         }
                         tab.auto_save();
+                        if !tab.pending_messages.is_empty() {
+                            tab.send_next_pending();
+                        }
                         // rx dropped (not put back)
                     } else {
                         tab.event_rx = rx_taken;
@@ -1614,20 +1667,17 @@ impl RatatuiUi {
             if event::poll(std::time::Duration::from_millis(100))? {
                 match event::read()? {
                     Event::Key(key) => {
-                        if !self.active().processing {
-                            self.idle_ticks = 0;
-                            self.typing_intensity = self
-                                .typing_intensity
-                                .saturating_add(TYPING_BOOST_PER_KEY)
-                                .min(40);
-                        }
+                        self.idle_ticks = 0;
+                        self.typing_intensity = self
+                            .typing_intensity
+                            .saturating_add(TYPING_BOOST_PER_KEY)
+                            .min(40);
 
                         match key.code {
                             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 exit_action = UiExitAction::Quit;
                                 break;
                             }
-                            // Ctrl+Left/Right to switch tabs
                             KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 if self.active_tab > 0 {
                                     self.active_tab -= 1;
@@ -1650,12 +1700,32 @@ impl RatatuiUi {
                             KeyCode::Tab if self.autocomplete.visible => {
                                 self.apply_autocomplete_selection();
                             }
+                            // Shift+Enter or Alt+Enter inserts newline
+                            KeyCode::Enter
+                                if key.modifiers.contains(KeyModifiers::SHIFT)
+                                    || key.modifiers.contains(KeyModifiers::ALT) =>
+                            {
+                                let tab = self.active_mut();
+                                let b = tab.byte_index();
+                                tab.input.insert(b, '\n');
+                                tab.cursor_position += 1;
+                                self.autocomplete.dismiss();
+                            }
+                            // Ctrl+J also inserts newline (universal fallback)
+                            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                let tab = self.active_mut();
+                                let b = tab.byte_index();
+                                tab.input.insert(b, '\n');
+                                tab.cursor_position += 1;
+                                self.autocomplete.dismiss();
+                            }
                             KeyCode::Enter => {
                                 if self.autocomplete.visible {
                                     self.apply_autocomplete_selection();
-                                    let user_input = self.input.clone();
-                                    self.input.clear();
-                                    self.cursor_position = 0;
+                                    let user_input = self.active().input.clone();
+                                    let tab = self.active_mut();
+                                    tab.input.clear();
+                                    tab.cursor_position = 0;
                                     self.autocomplete.dismiss();
                                     if is_slash_command(&user_input) {
                                         if let Some(action) = self.handle_command(&user_input) {
@@ -1666,16 +1736,17 @@ impl RatatuiUi {
                                     continue;
                                 }
 
-                                if !self.input.trim().is_empty() && !self.active().processing {
-                                    let user_input = self.input.clone();
-                                    self.input.clear();
-                                    self.cursor_position = 0;
+                                let input_text = self.active().input.trim().to_string();
+                                if !input_text.is_empty() {
+                                    let tab = self.active_mut();
+                                    tab.input.clear();
+                                    tab.cursor_position = 0;
                                     self.autocomplete.dismiss();
 
                                     if is_slash_command(
-                                        user_input.split_whitespace().next().unwrap_or(""),
+                                        input_text.split_whitespace().next().unwrap_or(""),
                                     ) {
-                                        if let Some(action) = self.handle_command(&user_input) {
+                                        if let Some(action) = self.handle_command(&input_text) {
                                             exit_action = action;
                                             break;
                                         }
@@ -1683,42 +1754,46 @@ impl RatatuiUi {
                                     }
 
                                     let tab = self.active_mut();
-                                    tab.messages.push(format!("You: {}", user_input));
-                                    tab.processing = true;
-                                    tab.pet_state = PetState::Thinking;
-                                    tab.follow_tail = true;
-                                    tab.auto_save();
+                                    if tab.processing {
+                                        tab.pending_messages.push_back(input_text);
+                                    } else {
+                                        tab.messages.push(format!("You: {}", input_text));
+                                        tab.processing = true;
+                                        tab.pet_state = PetState::Thinking;
+                                        tab.follow_tail = true;
+                                        tab.auto_save();
 
-                                    if let Some(mut moved_agent) = tab.agent.take() {
-                                        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-                                        tab.event_rx = Some(rx);
-                                        let input_clone = user_input.clone();
-                                        tab.agent_handle = Some(tokio::spawn(async move {
-                                            let result = moved_agent
-                                                .process_message(&input_clone, Some(tx))
-                                                .await;
-                                            result.map(|_| moved_agent)
-                                        }));
+                                        if let Some(mut moved_agent) = tab.agent.take() {
+                                            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                                            tab.event_rx = Some(rx);
+                                            let input_clone = input_text.clone();
+                                            tab.agent_handle = Some(tokio::spawn(async move {
+                                                let result = moved_agent
+                                                    .process_message(&input_clone, Some(tx))
+                                                    .await;
+                                                result.map(|_| moved_agent)
+                                            }));
+                                        }
                                     }
                                 }
                             }
-                            KeyCode::Up if !self.active().processing => {
+                            // PageUp/PageDown for fast scroll
+                            KeyCode::PageUp => {
                                 self.active_mut().follow_tail = false;
                                 let off = self.active().scroll_offset;
-                                self.active_mut().scroll_offset = off.saturating_sub(1);
+                                self.active_mut().scroll_offset = off.saturating_sub(10);
                             }
-                            KeyCode::Down if !self.active().processing => {
-                                self.active_mut().scroll_offset += 1;
+                            KeyCode::PageDown => {
+                                let tab = self.active_mut();
+                                tab.scroll_offset += 10;
                             }
                             _ => {
-                                if !self.active().processing {
-                                    self.handle_key_event(key);
-                                }
+                                self.handle_key_event(key);
                             }
                         }
                     }
-                    Event::Mouse(mouse) => {
-                        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                    Event::Mouse(mouse) => match mouse.kind {
+                        MouseEventKind::Down(MouseButton::Left) => {
                             let tab_bar = self.tab_bar_rect;
                             if self.tabs.len() > 1
                                 && mouse.row == tab_bar.y
@@ -1738,10 +1813,19 @@ impl RatatuiUi {
                                 }
                             }
                         }
-                    }
+                        MouseEventKind::ScrollUp => {
+                            self.active_mut().follow_tail = false;
+                            let off = self.active().scroll_offset;
+                            self.active_mut().scroll_offset = off.saturating_sub(3);
+                        }
+                        MouseEventKind::ScrollDown => {
+                            self.active_mut().scroll_offset += 3;
+                        }
+                        _ => {}
+                    },
                     _ => {}
                 }
-            } else if !self.active().processing {
+            } else {
                 self.idle_ticks += 1;
                 self.typing_intensity = self.typing_intensity.saturating_sub(TYPING_DECAY_PER_TICK);
             }
@@ -1750,7 +1834,7 @@ impl RatatuiUi {
             {
                 let ti = self.typing_intensity;
                 let idle = self.idle_ticks;
-                let input_empty = self.input.is_empty();
+                let input_empty = self.tabs[self.active_tab].input.is_empty();
                 let tab = &mut self.tabs[self.active_tab];
                 if !tab.processing {
                     if ti > TYPING_FAST_THRESHOLD {
