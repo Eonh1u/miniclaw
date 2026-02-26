@@ -117,6 +117,8 @@ miniclaw/
 - [x] 对话历史持久化（`/save`、`/load`、`/sessions` 命令，保存到 `~/.miniclaw/sessions/`）
 - [x] 会话导入/导出（`/export <path>`、`/import <path>` 命令，JSON 格式）
 - [x] 多会话标签页系统（`/new`、`/close`、`/rename` 命令，Ctrl+Left/Right 切换，鼠标点击切换）
+- [x] 分屏同时展示多会话（左右等分列布局，活动会话青色边框，鼠标点击切换焦点）
+- [x] 会话自动保存（每次用户输入/AI 输出/退出时自动持久化到 `~/.miniclaw/sessions/`）
 - [ ] 多行输入支持
 - [ ] 上下文窗口管理（token 限制截断/摘要）
 
@@ -195,6 +197,7 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-26 | 分屏展示 + 自动保存：多会话左右分屏同时展示（活动会话青色边框，鼠标点击切换焦点）；会话自动持久化（用户输入/AI 输出/退出时自动保存到 `~/.miniclaw/sessions/`，防止非正常退出丢失数据） |
 | 2026-02-26 | 多会话标签页 + 对话持久化：新增 `src/session.rs` 模块（JSON 持久化）；重构 TUI 为 `SessionTab` 多会话架构；标签栏 UI（鼠标点击 + Ctrl+Left/Right 切换）；新增命令 `/new`、`/close`、`/rename`、`/save`、`/load`、`/sessions`、`/export`、`/import`；`Agent::create()` 工厂方法；4 个新单元测试（共 35 个） |
 | 2026-02-26 | 工具调用进度优化：`AgentEvent::ToolStart/ToolEnd` 增加 `arguments` 字段；进度显示具体文件路径（如「⚡ 读取文件 src/main.rs ...」）；完成后原地覆盖替换进行中消息（非追加新行）；颜色区分：黄色=进行中、青色=完成、红色=失败 |
 | 2026-02-26 | CI 修复：修正 `src/ui/ratatui_ui.rs` 格式问题使 `cargo fmt --check` 通过，GitHub Actions CI 全部步骤（fmt、clippy、build、test）执行成功 |
