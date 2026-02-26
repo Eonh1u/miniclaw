@@ -13,6 +13,8 @@
 //! - **Box<dyn Tool>**: Rust's way of storing different types that implement
 //!   the same trait in a single collection (trait objects / dynamic dispatch)
 
+pub mod bash;
+pub mod edit;
 pub mod list_directory;
 pub mod read_file;
 pub mod write_file;
@@ -119,6 +121,8 @@ pub fn create_default_router() -> ToolRouter {
     let mut router = ToolRouter::new();
     router.register(Box::new(read_file::ReadFileTool));
     router.register(Box::new(write_file::WriteFileTool));
+    router.register(Box::new(edit::EditTool));
+    router.register(Box::new(bash::BashTool));
     router.register(Box::new(list_directory::ListDirectoryTool));
     router
 }
@@ -135,9 +139,11 @@ mod tests {
     #[test]
     fn test_default_router_registers_all_tools() {
         let router = create_default_router();
-        assert_eq!(router.len(), 3);
+        assert_eq!(router.len(), 5);
         assert!(router.has_tool("read_file"));
         assert!(router.has_tool("write_file"));
+        assert!(router.has_tool("edit"));
+        assert!(router.has_tool("bash"));
         assert!(router.has_tool("list_directory"));
         assert!(!router.has_tool("nonexistent"));
     }
@@ -146,10 +152,12 @@ mod tests {
     fn test_router_definitions() {
         let router = create_default_router();
         let defs = router.definitions();
-        assert_eq!(defs.len(), 3);
+        assert_eq!(defs.len(), 5);
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"read_file"));
         assert!(names.contains(&"write_file"));
+        assert!(names.contains(&"edit"));
+        assert!(names.contains(&"bash"));
         assert!(names.contains(&"list_directory"));
     }
 
