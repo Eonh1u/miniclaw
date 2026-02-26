@@ -1206,8 +1206,7 @@ impl RatatuiUi {
                 }
             } else if !self.processing {
                 self.idle_ticks += 1;
-                self.typing_intensity =
-                    self.typing_intensity.saturating_sub(TYPING_DECAY_PER_TICK);
+                self.typing_intensity = self.typing_intensity.saturating_sub(TYPING_DECAY_PER_TICK);
             }
 
             // Pet state machine
