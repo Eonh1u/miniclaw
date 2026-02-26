@@ -667,6 +667,11 @@ impl SessionTab {
         }
     }
 
+    fn auto_save(&self) {
+        let data = self.to_session_data();
+        let _ = session::save_session(&data);
+    }
+
     fn handle_agent_event(&mut self, event: AgentEvent) {
         match event {
             AgentEvent::StreamDelta(delta) => {
@@ -813,6 +818,7 @@ pub struct RatatuiUi {
     config: AppConfig,
     project_root: PathBuf,
     tab_bar_rect: Rect,
+    session_rects: Vec<Rect>,
 }
 
 impl RatatuiUi {
@@ -839,6 +845,7 @@ impl RatatuiUi {
             config,
             project_root,
             tab_bar_rect: Rect::default(),
+            session_rects: Vec::new(),
         }
     }
 
@@ -1068,8 +1075,29 @@ impl RatatuiUi {
         f.render_widget(widget, area);
     }
 
-    fn render_conversation(&self, f: &mut Frame, area: Rect) {
-        let tab = self.active();
+    fn render_conversations(&mut self, f: &mut Frame, area: Rect) {
+        let tab_count = self.tabs.len();
+        if tab_count == 1 {
+            self.session_rects = vec![area];
+            Self::render_single_conversation(&self.tabs[0], true, f, area);
+            return;
+        }
+
+        let constraints: Vec<Constraint> = self
+            .tabs
+            .iter()
+            .map(|_| Constraint::Ratio(1, tab_count as u32))
+            .collect();
+        let cols = Layout::horizontal(constraints).split(area);
+        self.session_rects = cols.to_vec();
+
+        for (i, tab) in self.tabs.iter().enumerate() {
+            let is_active = i == self.active_tab;
+            Self::render_single_conversation(tab, is_active, f, cols[i]);
+        }
+    }
+
+    fn render_single_conversation(tab: &SessionTab, is_active: bool, f: &mut Frame, area: Rect) {
         let text_lines = Self::build_conversation_lines(&tab.messages);
         let visible_height = area.height.saturating_sub(2) as usize;
         let wrap_width = area.width.saturating_sub(2) as usize;
@@ -1082,8 +1110,32 @@ impl RatatuiUi {
             tab.scroll_offset.min(max_scroll)
         };
 
+        let border_color = if is_active {
+            Color::Cyan
+        } else {
+            Color::DarkGray
+        };
+        let title_style = if is_active {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let title = if tab.processing {
+            format!(" {} ⏳ ", tab.name)
+        } else {
+            format!(" {} ", tab.name)
+        };
+
         let p = Paragraph::new(text_lines)
-            .block(Block::default().borders(Borders::ALL).title("Conversation"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .title_style(title_style)
+                    .border_style(Style::default().fg(border_color)),
+            )
             .wrap(Wrap { trim: true })
             .scroll((scroll as u16, 0));
         f.render_widget(p, area);
@@ -1226,7 +1278,7 @@ impl RatatuiUi {
         if show_tabs {
             self.render_tab_bar(f, rows[1]);
         }
-        self.render_conversation(f, rows[2]);
+        self.render_conversations(f, rows[2]);
         self.render_input(f, rows[3]);
         self.render_autocomplete(f, rows[3]);
     }
@@ -1237,7 +1289,12 @@ impl RatatuiUi {
         let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
 
         match command {
-            "/quit" | "/exit" => return Some(UiExitAction::Quit),
+            "/quit" | "/exit" => {
+                for tab in &self.tabs {
+                    tab.auto_save();
+                }
+                return Some(UiExitAction::Quit);
+            }
             "/clear" => {
                 if let Some(agent) = self.active_mut().agent.as_mut() {
                     agent.clear_history();
@@ -1546,6 +1603,7 @@ impl RatatuiUi {
                                 }
                             }
                         }
+                        tab.auto_save();
                         // rx dropped (not put back)
                     } else {
                         tab.event_rx = rx_taken;
@@ -1629,6 +1687,7 @@ impl RatatuiUi {
                                     tab.processing = true;
                                     tab.pet_state = PetState::Thinking;
                                     tab.follow_tail = true;
+                                    tab.auto_save();
 
                                     if let Some(mut moved_agent) = tab.agent.take() {
                                         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1667,6 +1726,16 @@ impl RatatuiUi {
                                 && mouse.column < tab_bar.x + tab_bar.width
                             {
                                 self.handle_mouse_tab_click(mouse.column - tab_bar.x);
+                            }
+                            for (i, rect) in self.session_rects.iter().enumerate() {
+                                if mouse.row >= rect.y
+                                    && mouse.row < rect.y + rect.height
+                                    && mouse.column >= rect.x
+                                    && mouse.column < rect.x + rect.width
+                                {
+                                    self.active_tab = i;
+                                    break;
+                                }
                             }
                         }
                     }
