@@ -644,6 +644,8 @@ struct SessionTab {
     pending_messages: VecDeque<String>,
     user_message_count: u32,
     title_task: Option<tokio::task::JoinHandle<Option<String>>>,
+    confirm_tx: Option<tokio::sync::mpsc::UnboundedSender<bool>>,
+    pending_confirm: Option<String>,
 }
 
 impl SessionTab {
@@ -668,6 +670,8 @@ impl SessionTab {
             pending_messages: VecDeque::new(),
             user_message_count: 0,
             title_task: None,
+            confirm_tx: None,
+            pending_confirm: None,
         }
     }
 
@@ -690,10 +694,14 @@ impl SessionTab {
             self.follow_tail = true;
 
             if let Some(mut moved_agent) = self.agent.take() {
-                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-                self.event_rx = Some(rx);
+                let (evt_tx, evt_rx) = tokio::sync::mpsc::unbounded_channel();
+                let (cfm_tx, mut cfm_rx) = tokio::sync::mpsc::unbounded_channel();
+                self.event_rx = Some(evt_rx);
+                self.confirm_tx = Some(cfm_tx);
                 self.agent_handle = Some(tokio::spawn(async move {
-                    let result = moved_agent.process_message(&msg, Some(tx)).await;
+                    let result = moved_agent
+                        .process_message(&msg, Some(evt_tx), Some(&mut cfm_rx))
+                        .await;
                     result.map(|_| moved_agent)
                 }));
             }
@@ -767,6 +775,16 @@ impl SessionTab {
                 } else {
                     self.messages.push(text);
                 }
+            }
+            AgentEvent::ToolConfirm {
+                name: _,
+                arguments: _,
+                description,
+            } => {
+                self.pending_confirm = Some(description.clone());
+                self.messages
+                    .push(format!("⚠️  需要确认: {} [Y/N]", description));
+                self.follow_tail = true;
             }
             AgentEvent::Done(response) => {
                 self.tool_progress_idx = None;
@@ -974,7 +992,7 @@ impl RatatuiUi {
                  Reply with ONLY the title, nothing else.\n\n{}",
                 summary_input
             );
-            match agent.process_message(&prompt, None).await {
+            match agent.process_message(&prompt, None, None).await {
                 Ok(title) => {
                     let title = title.trim().trim_matches('"').trim().to_string();
                     if title.len() <= 50 && !title.is_empty() {
@@ -1273,20 +1291,40 @@ impl RatatuiUi {
 
     fn render_session_input(tab: &SessionTab, is_active: bool, f: &mut Frame, area: Rect) {
         let border_color = if is_active {
-            Color::Cyan
+            if tab.pending_confirm.is_some() {
+                Color::Yellow
+            } else {
+                Color::Cyan
+            }
         } else {
             Color::DarkGray
         };
+
+        if let Some(desc) = &tab.pending_confirm {
+            let title = "⚠️  确认执行? [Y] 确认 / [N] 取消";
+            let p = Paragraph::new(desc.as_str())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(title)
+                        .title_style(
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                        .border_style(Style::default().fg(Color::Yellow)),
+                )
+                .wrap(Wrap { trim: false });
+            f.render_widget(p, area);
+            return;
+        }
+
         let pending_hint = if !tab.pending_messages.is_empty() {
             format!(" [{} pending]", tab.pending_messages.len())
         } else {
             String::new()
         };
-        let title = if is_active {
-            format!("Input{}", pending_hint)
-        } else {
-            format!("Input{}", pending_hint)
-        };
+        let title = format!("Input{}", pending_hint);
 
         let p = Paragraph::new(tab.input.as_str())
             .block(
@@ -1818,6 +1856,24 @@ impl RatatuiUi {
                                 exit_action = UiExitAction::Quit;
                                 break;
                             }
+                            // Y/N for tool confirmation
+                            KeyCode::Char('y' | 'Y') if self.active().pending_confirm.is_some() => {
+                                let tab = self.active_mut();
+                                tab.pending_confirm = None;
+                                if let Some(tx) = &tab.confirm_tx {
+                                    let _ = tx.send(true);
+                                }
+                                continue;
+                            }
+                            KeyCode::Char('n' | 'N') if self.active().pending_confirm.is_some() => {
+                                let tab = self.active_mut();
+                                tab.pending_confirm = None;
+                                tab.messages.push("  ✗ 操作已取消".to_string());
+                                if let Some(tx) = &tab.confirm_tx {
+                                    let _ = tx.send(false);
+                                }
+                                continue;
+                            }
                             KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 if self.active_tab > 0 {
                                     self.active_tab -= 1;
@@ -1906,12 +1962,20 @@ impl RatatuiUi {
                                         tab.auto_save();
 
                                         if let Some(mut moved_agent) = tab.agent.take() {
-                                            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-                                            tab.event_rx = Some(rx);
+                                            let (evt_tx, evt_rx) =
+                                                tokio::sync::mpsc::unbounded_channel();
+                                            let (cfm_tx, mut cfm_rx) =
+                                                tokio::sync::mpsc::unbounded_channel();
+                                            tab.event_rx = Some(evt_rx);
+                                            tab.confirm_tx = Some(cfm_tx);
                                             let input_clone = input_text.clone();
                                             tab.agent_handle = Some(tokio::spawn(async move {
                                                 let result = moved_agent
-                                                    .process_message(&input_clone, Some(tx))
+                                                    .process_message(
+                                                        &input_clone,
+                                                        Some(evt_tx),
+                                                        Some(&mut cfm_rx),
+                                                    )
                                                     .await;
                                                 result.map(|_| moved_agent)
                                             }));

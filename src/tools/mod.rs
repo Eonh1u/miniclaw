@@ -17,6 +17,7 @@ pub mod bash;
 pub mod edit;
 pub mod list_directory;
 pub mod read_file;
+pub mod risk;
 pub mod write_file;
 
 use anyhow::{Context, Result};

@@ -12,6 +12,7 @@ use crate::llm::anthropic::AnthropicProvider;
 use crate::llm::openai_compatible::OpenAiCompatibleProvider;
 use crate::llm::LlmProvider;
 use crate::rules;
+use crate::tools::risk::{self, RiskLevel};
 use crate::tools::{create_default_router, ToolRouter};
 use crate::types::{ChatRequest, ChatResponse, Message, StreamChunk, TokenUsage};
 
@@ -31,6 +32,12 @@ pub enum AgentEvent {
         name: String,
         arguments: String,
         success: bool,
+    },
+    /// A dangerous tool call needs user confirmation before execution.
+    ToolConfirm {
+        name: String,
+        arguments: String,
+        description: String,
     },
     /// Final response ready (content may be empty if already streamed).
     Done(String),
@@ -97,6 +104,7 @@ impl Agent {
         &mut self,
         user_input: &str,
         event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
+        mut confirm_rx: Option<&mut mpsc::UnboundedReceiver<bool>>,
     ) -> Result<String> {
         self.messages.push(Message::user(user_input));
 
@@ -157,6 +165,36 @@ impl Agent {
                 ));
 
                 for tool_call in &response.tool_calls {
+                    let risk = risk::assess_risk(&tool_call.name, &tool_call.arguments);
+
+                    if risk == RiskLevel::Dangerous {
+                        let desc = risk::describe_tool_call(&tool_call.name, &tool_call.arguments);
+                        emit(AgentEvent::ToolConfirm {
+                            name: tool_call.name.clone(),
+                            arguments: tool_call.arguments.clone(),
+                            description: desc,
+                        });
+
+                        let approved = if let Some(rx) = confirm_rx.as_mut() {
+                            rx.recv().await.unwrap_or(false)
+                        } else {
+                            false
+                        };
+
+                        if !approved {
+                            let deny_msg =
+                                format!("Tool call '{}' was denied by the user.", tool_call.name);
+                            emit(AgentEvent::ToolEnd {
+                                name: tool_call.name.clone(),
+                                arguments: tool_call.arguments.clone(),
+                                success: false,
+                            });
+                            self.messages
+                                .push(Message::tool_result(&tool_call.id, &deny_msg));
+                            continue;
+                        }
+                    }
+
                     emit(AgentEvent::ToolStart {
                         name: tool_call.name.clone(),
                         arguments: tool_call.arguments.clone(),
