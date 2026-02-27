@@ -313,6 +313,8 @@ List files and directories at a path with optional recursive traversal.
                 max_tokens: self.config.llm.max_tokens,
                 tools: vec![],
                 enable_search: false,
+                api_key: None,
+                api_key_env: None,
             });
 
             let max_tokens = if model_entry.max_tokens > 0 {
@@ -438,10 +440,10 @@ List files and directories at a path with optional recursive traversal.
         project_root: &Path,
         model_id: Option<&str>,
     ) -> Result<Self> {
-        let api_key = config.api_key()?;
         let model_id = model_id
             .map(String::from)
             .unwrap_or_else(|| config.default_model_id());
+        let api_key = config.api_key_for_model(&model_id)?;
         let entry = config
             .get_model_entry(&model_id)
             .unwrap_or_else(|| ModelEntry {
@@ -454,6 +456,8 @@ List files and directories at a path with optional recursive traversal.
                 max_tokens: config.llm.max_tokens,
                 tools: vec![],
                 enable_search: false,
+                api_key: None,
+                api_key_env: None,
             });
         let llm = Self::create_provider_for_model(&api_key, &entry)?;
         let tool_router = create_default_router();
@@ -495,7 +499,7 @@ List files and directories at a path with optional recursive traversal.
                 model_id
             )
         })?;
-        let api_key = config.api_key()?;
+        let api_key = config.api_key_for_model(model_id)?;
         let llm = Self::create_provider_for_model(&api_key, &entry)?;
         self.llm = llm;
         self.current_model_id = model_id.to_string();

@@ -132,6 +132,8 @@ miniclaw/
 - [x] 对话滚动改进（PageUp/PageDown 快速翻页，鼠标滚轮，修复 scroll_offset 同步）
 - [x] 多模型配置与会话内切换（`[[llm.models]]` 列表、`/model` 命令、方向键选择模型弹窗、`current_model_id` 持久化）
 - [x] 按模型配置工具列表（`tools` 字段，空=全部；`enable_search` 支持 qwen3.5-plus 联网搜索）
+- [x] 按模型配置 API Key（`api_key`、`api_key_env`），支持 Coding Plan 与按量计费混用
+- [x] Provider 层级：`[llm.providers.xxx]` 统一 base_url、api_key_env、api；模型 `provider_id` 继承；id 格式 `provider_id/model_id`
 - [ ] 上下文窗口管理（token 限制截断/摘要）
 
 ### 阶段 7：高级功能 🔶 进行中
@@ -155,37 +157,30 @@ api_key = ""          # 或使用环境变量
 api_key_env = "LLM_API_KEY"
 max_tokens = 4096
 
-# 可选：多模型列表，每个模型可单独配置 context_window、max_tokens、tools、enable_search
+# Provider 层级：每个 provider 有统一的 base_url、api_key_env、api 格式；模型通过 provider_id 继承
+# 模型 id 格式：有 provider_id 时为 "provider_id/model_id"（如 dashscope/qwen3.5-plus）
+# [llm.providers.dashscope]
+# base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+# api_key_env = "LLM_API_KEY"
+# api = "openai_compatible"
+# [llm.providers.coding_plan]
+# base_url = "https://coding.dashscope.aliyuncs.com/v1"
+# api_key_env = "CODING_PLAN_API_KEY"
+# api_key_env = "CODING_PLAN_API_KEY"
+# api = "openai_compatible"
 # [[llm.models]]
+# provider_id = "dashscope"
 # id = "qwen-plus"
-# name = "Qwen Plus"
-# provider = "openai_compatible"
 # model = "qwen-plus"
-# api_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-# context_window = 131072   # 128K
-# max_tokens = 4096
-# tools = []               # 空 = 全部工具
-# enable_search = false
-# [[llm.models]]
-# id = "qwen3.5-plus"
-# name = "Qwen 3.5 Plus"
-# provider = "openai_compatible"
-# model = "qwen3.5-plus"
-# api_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-# context_window = 1048576  # 1M
-# max_tokens = 8192
-# tools = []               # 空 = 全部工具
-# enable_search = true     # 联网搜索，参考 https://help.aliyun.com/zh/model-studio/web-search
-# [[llm.models]]
-# id = "deepseek"
-# name = "DeepSeek"
-# provider = "openai_compatible"
-# model = "deepseek-chat"
-# api_base = "https://api.deepseek.com/v1"
 # context_window = 131072
 # max_tokens = 4096
-# tools = ["read_file", "write_file", "edit", "bash", "list_directory"]  # 显式指定工具列表
-# default_model = "qwen-plus"
+# [[llm.models]]
+# provider_id = "coding_plan"
+# id = "qwen3.5-plus"
+# model = "qwen3.5-plus"
+# context_window = 1048576
+# enable_search = true
+# default_model = "dashscope/qwen3.5-plus"
 
 [agent]
 max_iterations = 20
@@ -198,6 +193,113 @@ enabled = ["read_file", "write_file", "list_directory", "exec_command"]
 show_stats = true
 show_pet = true
 ```
+
+### Provider 层级与 Coding Plan 示例
+
+[阿里云 Coding Plan](https://help.aliyun.com/zh/model-studio/coding-plan-quickstart) 使用专属 API Key（`sk-sp-xxxxx`）和 Base URL。通过 Provider 层级，一个 provider 统一配置 base_url、api_key_env、api 格式，其下多个模型继承：
+
+```toml
+[llm]
+default_model = "dashscope/qwen3.5-plus"
+
+[llm.providers.dashscope]
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_key_env = "LLM_API_KEY"
+api = "openai_compatible"
+
+[llm.providers.coding_plan]
+base_url = "https://coding.dashscope.aliyuncs.com/v1"
+api_key_env = "CODING_PLAN_API_KEY"
+api = "openai_compatible"
+
+[[llm.models]]
+provider_id = "dashscope"
+id = "qwen-plus"
+name = "Qwen Plus"
+model = "qwen-plus"
+context_window = 131072
+max_tokens = 4096
+
+[[llm.models]]
+provider_id = "dashscope"
+id = "qwen3.5-plus"
+name = "Qwen 3.5 Plus"
+model = "qwen3.5-plus"
+context_window = 1048576
+max_tokens = 8192
+enable_search = true
+
+[[llm.models]]
+provider_id = "coding_plan"
+id = "qwen3.5-plus"
+name = "Qwen 3.5 Plus (Coding Plan)"
+model = "qwen3.5-plus"
+context_window = 1048576
+max_tokens = 65536
+enable_search = true
+
+[[llm.models]]
+provider_id = "coding_plan"
+id = "qwen3-max-2026-01-23"
+model = "qwen3-max-2026-01-23"
+context_window = 262144
+max_tokens = 65536
+
+[[llm.models]]
+provider_id = "coding_plan"
+id = "qwen3-coder-next"
+model = "qwen3-coder-next"
+context_window = 262144
+max_tokens = 65536
+
+[[llm.models]]
+provider_id = "coding_plan"
+id = "qwen3-coder-plus"
+model = "qwen3-coder-plus"
+context_window = 1048576
+max_tokens = 65536
+
+[[llm.models]]
+provider_id = "coding_plan"
+id = "MiniMax-M2.5"
+model = "MiniMax-M2.5"
+context_window = 1048576
+max_tokens = 65536
+
+[[llm.models]]
+provider_id = "coding_plan"
+id = "glm-5"
+model = "glm-5"
+context_window = 202752
+max_tokens = 16384
+
+[[llm.models]]
+provider_id = "coding_plan"
+id = "glm-4.7"
+model = "glm-4.7"
+context_window = 202752
+max_tokens = 16384
+
+[[llm.models]]
+provider_id = "coding_plan"
+id = "kimi-k2.5"
+model = "kimi-k2.5"
+context_window = 262144
+max_tokens = 32768
+
+[agent]
+max_iterations = 20
+system_prompt = "You are a helpful AI assistant..."
+
+[tools]
+enabled = ["read_file", "write_file", "list_directory", "exec_command"]
+
+[ui]
+show_stats = true
+show_pet = true
+```
+
+模型 id 格式：`provider_id/model_id`（如 `dashscope/qwen3.5-plus`、`coding_plan/kimi-k2.5`）。使用 Coding Plan 前：`export CODING_PLAN_API_KEY=sk-sp-xxxxx`
 
 ---
 
@@ -241,6 +343,8 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-27 | Provider 层级：ProviderConfig + RawModelEntry；[llm.providers.xxx] 统一配置；模型 provider_id 继承；id 格式 provider_id/model_id；添加 kimi-k2.5、glm-5、MiniMax-M2.5 等 Coding Plan 模型 |
+| 2026-02-27 | 支持 Coding Plan：ModelEntry 新增 api_key、api_key_env；api_key_for_model 按模型解析；ROADMAP 添加 Coding Plan 配置示例 |
 | 2026-02-27 | 修复 config.rs `get_model_entry` rustfmt 格式；开发规范新增「格式检查」：每次修改后执行 `cargo fmt --check` |
 | 2026-02-27 | 按模型配置工具：`ModelEntry.tools`（空=全部工具）、`enable_search`（qwen3.5-plus 联网搜索）；ChatRequest 传递 enable_search；Agent 按模型过滤 tools |
 | 2026-02-27 | 多模型支持：配置 `[[llm.models]]` 列表；`/model` 命令弹出方向键选择模型弹窗（与 /load 一致）；会话内切换；`current_model_id` 持久化 |

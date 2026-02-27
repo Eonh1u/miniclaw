@@ -1757,11 +1757,10 @@ impl RatatuiUi {
         for (i, m) in self.model_picker.models.iter().enumerate() {
             let is_selected = i == self.model_picker.selected;
             let is_current = m.id == self.model_picker.current_model_id;
-            let name = if m.name.is_empty() { &m.model } else { &m.name };
             let label = if is_current {
-                format!(" {} ({}) *", m.id, name)
+                format!(" {} *", m.id)
             } else {
-                format!(" {} ({})", m.id, name)
+                format!(" {}", m.id)
             };
             if is_selected {
                 lines.push(Line::from(Span::styled(
