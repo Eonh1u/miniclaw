@@ -100,6 +100,48 @@ impl Agent {
         }
     }
 
+    /// Rough token estimation: ~4 chars per token for English, ~2 for CJK.
+    fn estimate_tokens(text: &str) -> u64 {
+        let char_count = text.chars().count() as u64;
+        (char_count / 3).max(1)
+    }
+
+    /// Estimate total tokens across all messages.
+    pub fn estimate_context_tokens(&self) -> u64 {
+        self.messages
+            .iter()
+            .map(|m| {
+                let content_tokens = Self::estimate_tokens(&m.content);
+                let tool_tokens: u64 = m
+                    .tool_calls
+                    .iter()
+                    .map(|tc| Self::estimate_tokens(&tc.arguments) + 10)
+                    .sum();
+                content_tokens + tool_tokens + 4 // overhead per message
+            })
+            .sum()
+    }
+
+    pub fn context_window(&self) -> u64 {
+        self.config.llm.context_window
+    }
+
+    /// Truncate old messages if approaching the context window limit.
+    /// Keeps the system prompt (first message) and the most recent messages.
+    fn compact_context(&mut self) {
+        let limit = self.config.llm.context_window;
+        let threshold = (limit as f64 * 0.85) as u64;
+
+        if self.estimate_context_tokens() <= threshold {
+            return;
+        }
+
+        // Keep system prompt (index 0) and remove oldest non-system messages
+        while self.messages.len() > 2 && self.estimate_context_tokens() > threshold {
+            self.messages.remove(1);
+        }
+    }
+
     pub async fn process_message(
         &mut self,
         user_input: &str,
@@ -107,6 +149,7 @@ impl Agent {
         mut confirm_rx: Option<&mut mpsc::UnboundedReceiver<bool>>,
     ) -> Result<String> {
         self.messages.push(Message::user(user_input));
+        self.compact_context();
 
         let emit = |evt: AgentEvent| {
             if let Some(tx) = &event_tx {

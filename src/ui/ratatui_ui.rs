@@ -480,6 +480,25 @@ impl HeaderWidget for StatsWidget {
             (today - first).num_days().max(0) + 1
         });
 
+        // Context window progress bar
+        let ctx_used = ctx.context_used;
+        let ctx_limit = ctx.context_limit;
+        let ctx_pct = if ctx_limit > 0 {
+            (ctx_used as f64 / ctx_limit as f64 * 100.0).min(100.0)
+        } else {
+            0.0
+        };
+        let bar_width = 16usize;
+        let filled = (ctx_pct / 100.0 * bar_width as f64) as usize;
+        let bar: String = "█".repeat(filled) + &"░".repeat(bar_width - filled);
+        let bar_color = if ctx_pct > 85.0 {
+            Color::Red
+        } else if ctx_pct > 60.0 {
+            Color::Yellow
+        } else {
+            Color::Green
+        };
+
         let lines = vec![
             status_line,
             Line::from(""),
@@ -508,12 +527,18 @@ impl HeaderWidget for StatsWidget {
                 ),
             ]),
             Line::from(""),
-            Line::from(Span::styled(
-                "  Shortcuts",
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::UNDERLINED),
-            )),
+            Line::from(vec![
+                Span::styled("  Ctx: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(bar, Style::default().fg(bar_color)),
+                Span::styled(
+                    format!(
+                        " {}/{}",
+                        format_token_count(ctx_used),
+                        format_token_count(ctx_limit)
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]),
             Line::from(vec![
                 Span::styled("  Enter ", Style::default().fg(Color::Cyan)),
                 Span::styled("submit  ", Style::default().fg(Color::DarkGray)),
@@ -646,11 +671,15 @@ struct SessionTab {
     title_task: Option<tokio::task::JoinHandle<Option<String>>>,
     confirm_tx: Option<tokio::sync::mpsc::UnboundedSender<bool>>,
     pending_confirm: Option<String>,
+    context_used: u64,
+    context_limit: u64,
 }
 
 impl SessionTab {
     fn new(id: String, name: String, agent: Agent) -> Self {
         let stats = agent.stats.clone();
+        let ctx_used = agent.estimate_context_tokens();
+        let ctx_limit = agent.context_window();
         Self {
             id,
             name,
@@ -672,6 +701,8 @@ impl SessionTab {
             title_task: None,
             confirm_tx: None,
             pending_confirm: None,
+            context_used: ctx_used,
+            context_limit: ctx_limit,
         }
     }
 
@@ -1435,6 +1466,8 @@ impl RatatuiUi {
             idle_ticks: self.idle_ticks,
             typing_intensity: self.typing_intensity,
             first_use_date: self.first_use_date,
+            context_used: tab.context_used,
+            context_limit: tab.context_limit,
         };
 
         let constraints: Vec<Constraint> = self
@@ -1817,6 +1850,8 @@ impl RatatuiUi {
                             match handle.await {
                                 Ok(Ok(returned_agent)) => {
                                     tab.cached_stats = returned_agent.stats.clone();
+                                    tab.context_used = returned_agent.estimate_context_tokens();
+                                    tab.context_limit = returned_agent.context_window();
                                     tab.agent = Some(returned_agent);
                                 }
                                 Ok(Err(e)) => {
