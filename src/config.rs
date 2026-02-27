@@ -24,6 +24,12 @@ pub struct LlmConfig {
     #[serde(default = "default_api_key_env")]
     pub api_key_env: String,
     pub max_tokens: u32,
+    #[serde(default = "default_context_window")]
+    pub context_window: u64,
+}
+
+fn default_context_window() -> u64 {
+    131072 // 128K tokens, common for modern models
 }
 
 fn default_api_key_env() -> String {
@@ -75,6 +81,7 @@ impl Default for AppConfig {
                 api_key: None,
                 api_key_env: "LLM_API_KEY".to_string(),
                 max_tokens: 4096,
+                context_window: default_context_window(),
             },
             agent: AgentConfig {
                 max_iterations: 20,

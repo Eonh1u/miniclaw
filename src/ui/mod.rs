@@ -20,6 +20,8 @@ pub struct WidgetContext<'a> {
     pub idle_ticks: u32,
     pub typing_intensity: u32,
     pub first_use_date: Option<chrono::NaiveDate>,
+    pub context_used: u64,
+    pub context_limit: u64,
 }
 
 /// Pluggable header widget trait.
