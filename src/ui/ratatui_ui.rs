@@ -1416,23 +1416,24 @@ impl RatatuiUi {
         };
         let title = format!("Input{}", pending_hint);
 
-        let p = Paragraph::new(tab.input.as_str())
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(title)
-                    .border_style(Style::default().fg(border_color)),
-            )
-            .wrap(Wrap { trim: false });
+        let wrap_width = area.width.saturating_sub(2) as usize;
+        let wrapped_text = Self::manual_wrap(&tab.input, wrap_width);
+        let p = Paragraph::new(wrapped_text).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(border_color)),
+        );
         f.render_widget(p, area);
 
         if is_active {
-            let wrap_width = area.width.saturating_sub(2) as usize;
             let (cursor_row, cursor_col) =
                 Self::cursor_row_col_wrapped(&tab.input, tab.cursor_position, wrap_width);
+            let max_visible_row = area.height.saturating_sub(2) as usize;
+            let display_row = cursor_row.min(max_visible_row);
             f.set_cursor_position((
                 area.x + cursor_col as u16 + 1,
-                area.y + cursor_row as u16 + 1,
+                area.y + display_row as u16 + 1,
             ));
         }
     }
@@ -1445,42 +1446,78 @@ impl RatatuiUi {
         }
     }
 
+    /// Count rendered lines using character-by-character wrapping (same logic as cursor).
     fn count_wrapped_lines(text: &str, wrap_width: usize) -> usize {
         if wrap_width == 0 {
-            return text.lines().count().max(1);
+            return text.split('\n').count().max(1);
         }
-        let mut total = 0;
-        for line in text.split('\n') {
-            let line_width: usize = line.chars().map(Self::char_display_width).sum();
-            if line_width == 0 {
-                total += 1;
+        let mut row = 1usize;
+        let mut col = 0usize;
+        for c in text.chars() {
+            if c == '\n' {
+                row += 1;
+                col = 0;
             } else {
-                total += (line_width + wrap_width - 1) / wrap_width;
+                let cw = Self::char_display_width(c);
+                if col + cw > wrap_width {
+                    row += 1;
+                    col = cw;
+                } else {
+                    col += cw;
+                }
             }
         }
-        total.max(1)
+        row
     }
 
+    /// Calculate cursor (row, col) with character-by-character wrapping.
     fn cursor_row_col_wrapped(input: &str, cursor_pos: usize, wrap_width: usize) -> (usize, usize) {
-        let before_cursor: String = input.chars().take(cursor_pos).collect();
         let mut row = 0usize;
         let mut col = 0usize;
-
-        for line in before_cursor.split('\n') {
-            let line_width: usize = line.chars().map(Self::char_display_width).sum();
-            if wrap_width > 0 && line_width > wrap_width {
-                row += line_width / wrap_width;
-                col = line_width % wrap_width;
-            } else {
-                col = line_width;
+        for (i, c) in input.chars().enumerate() {
+            if i >= cursor_pos {
+                break;
             }
-            row += 1; // newline advances row
-        }
-        // The last split segment doesn't end with \n, so undo the extra row
-        if row > 0 {
-            row -= 1;
+            if c == '\n' {
+                row += 1;
+                col = 0;
+            } else {
+                let cw = Self::char_display_width(c);
+                if wrap_width > 0 && col + cw > wrap_width {
+                    row += 1;
+                    col = cw;
+                } else {
+                    col += cw;
+                }
+            }
         }
         (row, col)
+    }
+
+    /// Manually wrap text at exact character boundaries.
+    /// Ensures rendered output matches cursor_row_col_wrapped exactly.
+    fn manual_wrap(text: &str, wrap_width: usize) -> String {
+        if wrap_width == 0 {
+            return text.to_string();
+        }
+        let mut result = String::new();
+        let mut col = 0usize;
+        for c in text.chars() {
+            if c == '\n' {
+                result.push('\n');
+                col = 0;
+            } else {
+                let cw = Self::char_display_width(c);
+                if col + cw > wrap_width {
+                    result.push('\n');
+                    col = cw;
+                } else {
+                    col += cw;
+                }
+                result.push(c);
+            }
+        }
+        result
     }
 
     fn render_autocomplete(&self, f: &mut Frame, input_area: Rect) {
