@@ -130,6 +130,8 @@ miniclaw/
 - [x] 待发送消息队列（处理中仍可输入，消息排队按序发送）
 - [x] 每个会话独立输入框（切换会话保留各自的输入内容）
 - [x] 对话滚动改进（PageUp/PageDown 快速翻页，鼠标滚轮，修复 scroll_offset 同步）
+- [x] 多模型配置与会话内切换（`[[llm.models]]` 列表、`/model` 命令、方向键选择模型弹窗、`current_model_id` 持久化）
+- [x] 按模型配置工具列表（`tools` 字段，空=全部；`enable_search` 支持 qwen3.5-plus 联网搜索）
 - [ ] 上下文窗口管理（token 限制截断/摘要）
 
 ### 阶段 7：高级功能 🔶 进行中
@@ -152,6 +154,38 @@ api_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 api_key = ""          # 或使用环境变量
 api_key_env = "LLM_API_KEY"
 max_tokens = 4096
+
+# 可选：多模型列表，每个模型可单独配置 context_window、max_tokens、tools、enable_search
+# [[llm.models]]
+# id = "qwen-plus"
+# name = "Qwen Plus"
+# provider = "openai_compatible"
+# model = "qwen-plus"
+# api_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+# context_window = 131072   # 128K
+# max_tokens = 4096
+# tools = []               # 空 = 全部工具
+# enable_search = false
+# [[llm.models]]
+# id = "qwen3.5-plus"
+# name = "Qwen 3.5 Plus"
+# provider = "openai_compatible"
+# model = "qwen3.5-plus"
+# api_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+# context_window = 1048576  # 1M
+# max_tokens = 8192
+# tools = []               # 空 = 全部工具
+# enable_search = true     # 联网搜索，参考 https://help.aliyun.com/zh/model-studio/web-search
+# [[llm.models]]
+# id = "deepseek"
+# name = "DeepSeek"
+# provider = "openai_compatible"
+# model = "deepseek-chat"
+# api_base = "https://api.deepseek.com/v1"
+# context_window = 131072
+# max_tokens = 4096
+# tools = ["read_file", "write_file", "edit", "bash", "list_directory"]  # 显式指定工具列表
+# default_model = "qwen-plus"
 
 [agent]
 max_iterations = 20
@@ -207,6 +241,8 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-27 | 按模型配置工具：`ModelEntry.tools`（空=全部工具）、`enable_search`（qwen3.5-plus 联网搜索）；ChatRequest 传递 enable_search；Agent 按模型过滤 tools |
+| 2026-02-27 | 多模型支持：配置 `[[llm.models]]` 列表；`/model` 命令弹出方向键选择模型弹窗（与 /load 一致）；会话内切换；`current_model_id` 持久化 |
 | 2026-02-27 | 新增部署支持：`scripts/install.sh` 安装脚本（自动安装 Rust、系统依赖、构建并安装到 ~/.local/bin）；`docs/DEPLOYMENT.md` 部署文档 |
 | 2026-02-26 | 新增 `bash` 和 `edit` 工具：`bash` 执行 shell 命令（超时控制、输出截断）；`edit` 精准文本替换（old_text 精确匹配、支持 replace_all）；工具进度显示支持命令预览和文件路径；15 个新单元测试（共 50 个） |
 | 2026-02-26 | 输入体验升级：多行输入（Ctrl+J/Alt+Enter 换行）；待发送消息队列（处理中可排队）；每个会话独立输入框；对话滚动改进（PageUp/Down、鼠标滚轮、scroll_offset 同步修复） |

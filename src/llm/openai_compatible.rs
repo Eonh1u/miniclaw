@@ -24,6 +24,9 @@ struct ApiRequest {
     max_tokens: u32,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<ApiTool>,
+    /// DashScope/百炼 联网搜索: enable_search=true. See https://help.aliyun.com/zh/model-studio/web-search
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enable_search: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -217,6 +220,7 @@ impl OpenAiCompatibleProvider {
             messages: api_messages,
             max_tokens: request.max_tokens,
             tools,
+            enable_search: request.enable_search,
         }
     }
 

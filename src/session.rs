@@ -16,6 +16,9 @@ pub struct SessionData {
     pub agent_messages: Vec<Message>,
     pub ui_messages: Vec<String>,
     pub stats: SessionStatsData,
+    /// Current model id for multi-model support. Empty means use config default.
+    #[serde(default)]
+    pub current_model_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -130,6 +133,7 @@ mod tests {
             agent_messages: vec![],
             ui_messages: vec!["Hello".to_string()],
             stats: SessionStatsData::default(),
+            current_model_id: String::new(),
         };
         let json = serde_json::to_string(&data).unwrap();
         let loaded: SessionData = serde_json::from_str(&json).unwrap();
@@ -163,6 +167,7 @@ mod tests {
             agent_messages: vec![],
             ui_messages: vec!["msg1".to_string(), "msg2".to_string()],
             stats: SessionStatsData::default(),
+            current_model_id: String::new(),
         };
         export_session(&data, &path).unwrap();
         let loaded = import_session(&path).unwrap();

@@ -105,6 +105,8 @@ pub struct ChatRequest {
     pub messages: Vec<Message>,
     pub tools: Vec<ToolDefinition>,
     pub max_tokens: u32,
+    /// Enable web search (DashScope/百炼: extra_body.enable_search). Used by qwen3.5-plus etc.
+    pub enable_search: Option<bool>,
 }
 
 #[derive(Debug, Clone)]

@@ -13,6 +13,32 @@ pub struct AppConfig {
     pub ui: UiConfig,
 }
 
+/// A single model entry in the models list. Used for multi-model config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelEntry {
+    /// Unique id for switching (e.g. "qwen-plus", "deepseek").
+    pub id: String,
+    /// Display name shown in UI.
+    #[serde(default)]
+    pub name: String,
+    pub provider: String,
+    pub model: String,
+    #[serde(default)]
+    pub api_base: Option<String>,
+    /// Context window size in tokens. 0 = use [llm] default.
+    #[serde(default)]
+    pub context_window: u64,
+    /// Max output tokens per response. 0 = use [llm] default.
+    #[serde(default)]
+    pub max_tokens: u32,
+    /// Allowed tool names for this model. Empty = all tools. E.g. ["read_file","write_file","bash"].
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// Enable web search (e.g. qwen3.5-plus 联网搜索). DashScope/百炼 API: extra_body.enable_search.
+    #[serde(default)]
+    pub enable_search: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
     pub provider: String,
@@ -26,6 +52,12 @@ pub struct LlmConfig {
     pub max_tokens: u32,
     #[serde(default = "default_context_window")]
     pub context_window: u64,
+    /// Multi-model list. If present, user can switch between models in session.
+    #[serde(default)]
+    pub models: Vec<ModelEntry>,
+    /// Default model id when using models list. Ignored if models is empty.
+    #[serde(default)]
+    pub default_model: Option<String>,
 }
 
 fn default_context_window() -> u64 {
@@ -82,6 +114,8 @@ impl Default for AppConfig {
                 api_key_env: "LLM_API_KEY".to_string(),
                 max_tokens: 4096,
                 context_window: default_context_window(),
+                models: vec![],
+                default_model: None,
             },
             agent: AgentConfig {
                 max_iterations: 20,
@@ -167,5 +201,110 @@ impl AppConfig {
         std::fs::write(&config_path, content)
             .with_context(|| format!("Failed to write config file: {}", config_path.display()))?;
         Ok(config_path)
+    }
+
+    /// Returns the list of available models. If `models` is empty, derives one from legacy provider/model/api_base.
+    pub fn list_models(&self) -> Vec<ModelEntry> {
+        if self.llm.models.is_empty() {
+            let name = if self.llm.model.is_empty() {
+                "default".to_string()
+            } else {
+                self.llm.model.clone()
+            };
+            vec![ModelEntry {
+                id: self.llm.model.clone(),
+                name: name.clone(),
+                provider: self.llm.provider.clone(),
+                model: self.llm.model.clone(),
+                api_base: self.llm.api_base.clone(),
+                context_window: self.llm.context_window,
+                max_tokens: self.llm.max_tokens,
+                tools: vec![],
+                enable_search: false,
+            }]
+        } else {
+            self.llm.models.clone()
+        }
+    }
+
+    /// Returns the default model id for new sessions.
+    pub fn default_model_id(&self) -> String {
+        let models = self.list_models();
+        if models.is_empty() {
+            return "default".to_string();
+        }
+        if let Some(ref default) = self.llm.default_model {
+            if models.iter().any(|m| m.id == *default) {
+                return default.clone();
+            }
+        }
+        models[0].id.clone()
+    }
+
+    /// Get model entry by id. Returns None if not found.
+    /// Resolves context_window/max_tokens 0 to [llm] defaults.
+    pub fn get_model_entry(&self, id: &str) -> Option<ModelEntry> {
+        self.list_models().into_iter().find(|m| m.id == id).map(|mut m| {
+            if m.context_window == 0 {
+                m.context_window = self.llm.context_window;
+            }
+            if m.max_tokens == 0 {
+                m.max_tokens = self.llm.max_tokens;
+            }
+            m
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_entry_tools_and_enable_search() {
+        let toml = r#"
+[llm]
+provider = "openai_compatible"
+model = "qwen-plus"
+api_key_env = "LLM_API_KEY"
+max_tokens = 4096
+
+[[llm.models]]
+id = "qwen3.5-plus"
+name = "Qwen 3.5 Plus"
+provider = "openai_compatible"
+model = "qwen3.5-plus"
+api_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+context_window = 1048576
+max_tokens = 8192
+tools = ["read_file", "write_file", "bash"]
+enable_search = true
+
+[[llm.models]]
+id = "qwen-plus"
+name = "Qwen Plus"
+provider = "openai_compatible"
+model = "qwen-plus"
+tools = []
+enable_search = false
+
+[agent]
+max_iterations = 20
+system_prompt = "You are a helpful assistant."
+
+[tools]
+enabled = ["read_file", "write_file", "list_directory", "exec_command"]
+"#;
+        let config: AppConfig = toml::from_str(toml).unwrap();
+        let models = config.list_models();
+        assert_eq!(models.len(), 2);
+
+        let qwen35 = models.iter().find(|m| m.id == "qwen3.5-plus").unwrap();
+        assert_eq!(qwen35.tools, ["read_file", "write_file", "bash"]);
+        assert!(qwen35.enable_search);
+
+        let qwen = models.iter().find(|m| m.id == "qwen-plus").unwrap();
+        assert!(qwen.tools.is_empty());
+        assert!(!qwen.enable_search);
     }
 }

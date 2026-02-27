@@ -17,7 +17,7 @@ use ratatui::{
 };
 
 use crate::agent::{Agent, AgentEvent, SessionStats};
-use crate::config::AppConfig;
+use crate::config::{AppConfig, ModelEntry};
 use crate::session::{self, SessionData, SessionStatsData};
 use crate::ui::{HeaderWidget, UiExitAction, WidgetContext};
 
@@ -76,6 +76,10 @@ const SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/pet",
         description: "Toggle pet panel",
+    },
+    SlashCommand {
+        name: "/model",
+        description: "List or switch model (/model [id])",
     },
     SlashCommand {
         name: "/quit",
@@ -741,11 +745,11 @@ impl SessionTab {
     }
 
     fn to_session_data(&self) -> SessionData {
-        let agent_messages = self
+        let (agent_messages, current_model_id) = self
             .agent
             .as_ref()
-            .map(|a| a.history().to_vec())
-            .unwrap_or_default();
+            .map(|a| (a.history().to_vec(), a.current_model_id().to_string()))
+            .unwrap_or_else(|| (Vec::new(), String::new()));
         SessionData {
             id: self.id.clone(),
             name: self.name.clone(),
@@ -753,6 +757,7 @@ impl SessionTab {
             agent_messages,
             ui_messages: self.messages.clone(),
             stats: SessionStatsData::from(&self.cached_stats),
+            current_model_id,
         }
     }
 
@@ -984,6 +989,63 @@ impl SessionPicker {
     }
 }
 
+/// Model picker popup state for /model command.
+struct ModelPicker {
+    visible: bool,
+    selected: usize,
+    models: Vec<ModelEntry>,
+    current_model_id: String,
+}
+
+impl ModelPicker {
+    fn new() -> Self {
+        Self {
+            visible: false,
+            selected: 0,
+            models: Vec::new(),
+            current_model_id: String::new(),
+        }
+    }
+
+    fn open(&mut self, models: Vec<ModelEntry>, current_model_id: &str) {
+        self.models = models;
+        self.current_model_id = current_model_id.to_string();
+        self.selected = self
+            .models
+            .iter()
+            .position(|m| m.id == current_model_id)
+            .unwrap_or(0);
+        self.visible = !self.models.is_empty();
+    }
+
+    fn move_up(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+        } else if !self.models.is_empty() {
+            self.selected = self.models.len() - 1;
+        }
+    }
+
+    fn move_down(&mut self) {
+        if self.selected + 1 < self.models.len() {
+            self.selected += 1;
+        } else {
+            self.selected = 0;
+        }
+    }
+
+    fn selected_model(&self) -> Option<&ModelEntry> {
+        self.models.get(self.selected)
+    }
+
+    fn dismiss(&mut self) {
+        self.visible = false;
+        self.models.clear();
+        self.selected = 0;
+        self.current_model_id.clear();
+    }
+}
+
 pub struct RatatuiUi {
     anim_tick: u32,
     idle_ticks: u32,
@@ -992,6 +1054,7 @@ pub struct RatatuiUi {
     first_use_date: Option<chrono::NaiveDate>,
     autocomplete: SlashAutocomplete,
     session_picker: SessionPicker,
+    model_picker: ModelPicker,
     tabs: Vec<SessionTab>,
     active_tab: usize,
     config: AppConfig,
@@ -1018,6 +1081,7 @@ impl RatatuiUi {
             first_use_date: ensure_first_use_date(),
             autocomplete: SlashAutocomplete::new(),
             session_picker: SessionPicker::new(),
+            model_picker: ModelPicker::new(),
             tabs: Vec::new(),
             active_tab: 0,
             config,
@@ -1664,6 +1728,69 @@ impl RatatuiUi {
         if self.session_picker.visible {
             self.render_session_picker(f);
         }
+        // Model picker popup (centered)
+        if self.model_picker.visible {
+            self.render_model_picker(f);
+        }
+    }
+
+    fn render_model_picker(&self, f: &mut Frame) {
+        let area = f.area();
+        let popup_h = (self.model_picker.models.len() as u16 + 4).min(area.height - 4);
+        let popup_w = 50u16.min(area.width - 4);
+        let popup_area = Rect {
+            x: (area.width - popup_w) / 2,
+            y: (area.height - popup_h) / 2,
+            width: popup_w,
+            height: popup_h,
+        };
+
+        f.render_widget(Clear, popup_area);
+
+        let mut lines: Vec<Line> = Vec::new();
+        lines.push(Line::from(Span::styled(
+            " ↑/↓ 选择  Enter 切换  Esc 取消",
+            Style::default().fg(Color::DarkGray),
+        )));
+        lines.push(Line::from(""));
+
+        for (i, m) in self.model_picker.models.iter().enumerate() {
+            let is_selected = i == self.model_picker.selected;
+            let is_current = m.id == self.model_picker.current_model_id;
+            let name = if m.name.is_empty() { &m.model } else { &m.name };
+            let label = if is_current {
+                format!(" {} ({}) *", m.id, name)
+            } else {
+                format!(" {} ({})", m.id, name)
+            };
+            if is_selected {
+                lines.push(Line::from(Span::styled(
+                    format!("▶ {}", label),
+                    Style::default()
+                        .bg(Color::Cyan)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD),
+                )));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", label),
+                    Style::default().fg(Color::White),
+                )));
+            }
+        }
+
+        let popup = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" 切换模型 ")
+                .title_style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .border_style(Style::default().fg(Color::Cyan)),
+        );
+        f.render_widget(popup, popup_area);
     }
 
     fn render_session_picker(&self, f: &mut Frame) {
@@ -1912,6 +2039,51 @@ impl RatatuiUi {
                     if visible { "enabled" } else { "disabled" }
                 ));
             }
+            "/model" => {
+                let models = self.config.list_models();
+                if arg.is_empty() {
+                    if models.is_empty() {
+                        self.active_mut()
+                            .messages
+                            .push("[No models configured]".into());
+                    } else if self.active().processing {
+                        self.active_mut()
+                            .messages
+                            .push("[Cannot switch model while processing]".into());
+                    } else {
+                        let current_id = self
+                            .active()
+                            .agent
+                            .as_ref()
+                            .map(|a| a.current_model_id().to_string())
+                            .unwrap_or_default();
+                        self.model_picker.open(models, &current_id);
+                    }
+                } else if self.active().processing {
+                    self.active_mut()
+                        .messages
+                        .push("[Cannot switch model while processing]".into());
+                } else {
+                    let config = self.config.clone();
+                    if let Some(agent) = self.active_mut().agent.as_mut() {
+                        match agent.switch_model(arg, &config) {
+                            Ok(()) => {
+                                let display = agent.current_model_display();
+                                self.active_mut()
+                                    .messages
+                                    .push(format!("[Switched to model: {}]", display));
+                            }
+                            Err(e) => {
+                                self.active_mut().messages.push(format!("Error: {}", e));
+                            }
+                        }
+                    } else {
+                        self.active_mut()
+                            .messages
+                            .push("[No agent available to switch]".into());
+                    }
+                }
+            }
             "/help" => {
                 let help = [
                     "--- Commands ---",
@@ -1927,6 +2099,7 @@ impl RatatuiUi {
                     "  /import <path>     Import session from file",
                     "  /stats             Toggle stats panel",
                     "  /pet               Toggle pet panel",
+                    "  /model [id]        List models or switch to model",
                     "  /quit              Exit the program",
                     "",
                     "  Shift+Enter/Alt+N  Insert newline (multi-line input)",
@@ -1951,7 +2124,12 @@ impl RatatuiUi {
 
     fn load_session_as_tab(&mut self, id: &str) -> Result<()> {
         let data = session::load_session(id)?;
-        let mut agent = Agent::create(&self.config, &self.project_root)?;
+        let model_id = if data.current_model_id.is_empty() {
+            None
+        } else {
+            Some(data.current_model_id.as_str())
+        };
+        let mut agent = Agent::create_with_model(&self.config, &self.project_root, model_id)?;
         agent.set_messages(data.agent_messages);
         agent.stats = data.stats.to_session_stats();
         let mut tab = SessionTab::new(data.id, data.name.clone(), agent);
@@ -1967,7 +2145,12 @@ impl RatatuiUi {
 
     fn import_session_as_tab(&mut self, path: &str) -> Result<()> {
         let data = session::import_session(std::path::Path::new(path))?;
-        let mut agent = Agent::create(&self.config, &self.project_root)?;
+        let model_id = if data.current_model_id.is_empty() {
+            None
+        } else {
+            Some(data.current_model_id.as_str())
+        };
+        let mut agent = Agent::create_with_model(&self.config, &self.project_root, model_id)?;
         agent.set_messages(data.agent_messages);
         agent.stats = data.stats.to_session_stats();
         let mut tab = SessionTab::new(data.id, data.name.clone(), agent);
@@ -2109,6 +2292,43 @@ impl RatatuiUi {
                             }
                             KeyCode::Esc if self.session_picker.visible => {
                                 self.session_picker.dismiss();
+                                continue;
+                            }
+                            // Model picker navigation
+                            KeyCode::Up if self.model_picker.visible => {
+                                self.model_picker.move_up();
+                                continue;
+                            }
+                            KeyCode::Down if self.model_picker.visible => {
+                                self.model_picker.move_down();
+                                continue;
+                            }
+                            KeyCode::Enter if self.model_picker.visible => {
+                                if let Some(m) = self.model_picker.selected_model() {
+                                    let model_id = m.id.clone();
+                                    self.model_picker.dismiss();
+                                    let config = self.config.clone();
+                                    if let Some(agent) = self.active_mut().agent.as_mut() {
+                                        match agent.switch_model(&model_id, &config) {
+                                            Ok(()) => {
+                                                let display = agent.current_model_display();
+                                                self.active_mut().messages.push(format!(
+                                                    "[Switched to model: {}]",
+                                                    display
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                self.active_mut()
+                                                    .messages
+                                                    .push(format!("Error: {}", e));
+                                            }
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
+                            KeyCode::Esc if self.model_picker.visible => {
+                                self.model_picker.dismiss();
                                 continue;
                             }
                             // Y/N for tool confirmation

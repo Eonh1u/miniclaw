@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use tokio::sync::mpsc;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, ModelEntry};
 use crate::llm::anthropic::AnthropicProvider;
 use crate::llm::openai_compatible::OpenAiCompatibleProvider;
 use crate::llm::LlmProvider;
@@ -69,6 +69,8 @@ pub struct Agent {
     messages: Vec<Message>,
     config: AppConfig,
     pub stats: SessionStats,
+    /// Current model id for multi-model support. Used when building ChatRequest.
+    current_model_id: String,
 }
 
 impl Agent {
@@ -77,8 +79,19 @@ impl Agent {
         tool_router: ToolRouter,
         config: AppConfig,
         project_root: &Path,
+        current_model_id: String,
     ) -> Self {
-        let system_prompt = Self::build_system_prompt(&config, project_root);
+        let model_display = config
+            .get_model_entry(&current_model_id)
+            .map(|m| {
+                if m.name.is_empty() {
+                    m.model.clone()
+                } else {
+                    m.name.clone()
+                }
+            })
+            .unwrap_or_else(|| current_model_id.clone());
+        let system_prompt = Self::build_system_prompt(&config, project_root, &model_display);
         let messages = vec![Message::system(&system_prompt)];
         Self {
             llm,
@@ -86,14 +99,51 @@ impl Agent {
             messages,
             config,
             stats: SessionStats::default(),
+            current_model_id,
         }
     }
 
-    fn build_system_prompt(config: &AppConfig, project_root: &Path) -> String {
+    /// Returns the current model id.
+    pub fn current_model_id(&self) -> &str {
+        &self.current_model_id
+    }
+
+    /// Returns the display name for the current model.
+    pub fn current_model_display(&self) -> String {
+        self.config
+            .get_model_entry(&self.current_model_id)
+            .map(|m| {
+                if m.name.is_empty() {
+                    m.model.clone()
+                } else {
+                    m.name.clone()
+                }
+            })
+            .unwrap_or_else(|| self.current_model_id.clone())
+    }
+
+    /// Get the ModelEntry for the current model. Used when building ChatRequest.
+    fn current_model_entry(&self) -> Option<ModelEntry> {
+        self.config.get_model_entry(&self.current_model_id)
+    }
+
+    /// Return tool definitions for the given model. If model.tools is non-empty,
+    /// only those tools are included; otherwise all tools from the router.
+    fn tools_for_model(&self, model_entry: &ModelEntry) -> Vec<crate::types::ToolDefinition> {
+        let all = self.tool_router.definitions();
+        if model_entry.tools.is_empty() {
+            return all;
+        }
+        all.into_iter()
+            .filter(|d| model_entry.tools.contains(&d.name))
+            .collect()
+    }
+
+    fn build_system_prompt(config: &AppConfig, project_root: &Path, model_display: &str) -> String {
         let cwd = project_root.display();
         let date = chrono::Local::now().format("%Y-%m-%d %H:%M");
         let os = std::env::consts::OS;
-        let model = &config.llm.model;
+        let model = model_display;
 
         let mut prompt = format!(
             r#"You are miniclaw, an interactive terminal AI assistant for software engineering tasks.
@@ -196,13 +246,22 @@ List files and directories at a path with optional recursive traversal.
     }
 
     pub fn context_window(&self) -> u64 {
-        self.config.llm.context_window
+        self.config
+            .get_model_entry(&self.current_model_id)
+            .map(|m| {
+                if m.context_window > 0 {
+                    m.context_window
+                } else {
+                    self.config.llm.context_window
+                }
+            })
+            .unwrap_or(self.config.llm.context_window)
     }
 
     /// Truncate old messages if approaching the context window limit.
     /// Keeps the system prompt (first message) and the most recent messages.
     fn compact_context(&mut self) {
-        let limit = self.config.llm.context_window;
+        let limit = self.context_window();
         let threshold = (limit as f64 * 0.85) as u64;
 
         if self.estimate_context_tokens() <= threshold {
@@ -244,11 +303,35 @@ List files and directories at a path with optional recursive traversal.
                 return Ok(msg);
             }
 
-            let request = ChatRequest {
+            let model_entry = self.current_model_entry().unwrap_or_else(|| ModelEntry {
+                id: self.current_model_id.clone(),
+                name: String::new(),
+                provider: self.config.llm.provider.clone(),
                 model: self.config.llm.model.clone(),
-                messages: self.messages.clone(),
-                tools: self.tool_router.definitions(),
+                api_base: self.config.llm.api_base.clone(),
+                context_window: self.config.llm.context_window,
                 max_tokens: self.config.llm.max_tokens,
+                tools: vec![],
+                enable_search: false,
+            });
+
+            let max_tokens = if model_entry.max_tokens > 0 {
+                model_entry.max_tokens
+            } else {
+                self.config.llm.max_tokens
+            };
+
+            let tools = self.tools_for_model(&model_entry);
+            let request = ChatRequest {
+                model: model_entry.model.clone(),
+                messages: self.messages.clone(),
+                tools,
+                max_tokens,
+                enable_search: if model_entry.enable_search {
+                    Some(true)
+                } else {
+                    None
+                },
             };
 
             let (chunk_tx, mut chunk_rx) = mpsc::unbounded_channel::<StreamChunk>();
@@ -346,20 +429,77 @@ List files and directories at a path with optional recursive traversal.
 
     /// Factory method: create a new Agent from config (creates LLM provider + tool router).
     pub fn create(config: &AppConfig, project_root: &Path) -> Result<Self> {
+        Self::create_with_model(config, project_root, None)
+    }
+
+    /// Create Agent with a specific model. Pass None to use config default.
+    pub fn create_with_model(
+        config: &AppConfig,
+        project_root: &Path,
+        model_id: Option<&str>,
+    ) -> Result<Self> {
         let api_key = config.api_key()?;
-        let api_base = config.llm.api_base.clone();
-        let llm: Box<dyn LlmProvider> = match config.llm.provider.as_str() {
-            "anthropic" => Box::new(AnthropicProvider::new(api_key, api_base)),
-            "openai_compatible" | "openai" => {
-                Box::new(OpenAiCompatibleProvider::new(api_key, api_base))
-            }
+        let model_id = model_id
+            .map(String::from)
+            .unwrap_or_else(|| config.default_model_id());
+        let entry = config
+            .get_model_entry(&model_id)
+            .unwrap_or_else(|| ModelEntry {
+                id: model_id.clone(),
+                name: String::new(),
+                provider: config.llm.provider.clone(),
+                model: config.llm.model.clone(),
+                api_base: config.llm.api_base.clone(),
+                context_window: config.llm.context_window,
+                max_tokens: config.llm.max_tokens,
+                tools: vec![],
+                enable_search: false,
+            });
+        let llm = Self::create_provider_for_model(&api_key, &entry)?;
+        let tool_router = create_default_router();
+        Ok(Self::new(
+            llm,
+            tool_router,
+            config.clone(),
+            project_root,
+            model_id,
+        ))
+    }
+
+    fn create_provider_for_model(
+        api_key: &str,
+        entry: &ModelEntry,
+    ) -> Result<Box<dyn LlmProvider>> {
+        let llm: Box<dyn LlmProvider> = match entry.provider.as_str() {
+            "anthropic" => Box::new(AnthropicProvider::new(
+                api_key.to_string(),
+                entry.api_base.clone(),
+            )),
+            "openai_compatible" | "openai" => Box::new(OpenAiCompatibleProvider::new(
+                api_key.to_string(),
+                entry.api_base.clone(),
+            )),
             other => bail!(
                 "Unknown provider: '{}'. Supported: 'anthropic', 'openai_compatible'",
                 other
             ),
         };
-        let tool_router = create_default_router();
-        Ok(Self::new(llm, tool_router, config.clone(), project_root))
+        Ok(llm)
+    }
+
+    /// Switch to a different model. Recreates the LLM provider.
+    pub fn switch_model(&mut self, model_id: &str, config: &AppConfig) -> Result<()> {
+        let entry = config.get_model_entry(model_id).with_context(|| {
+            format!(
+                "Model '{}' not found. Use /model to list available models.",
+                model_id
+            )
+        })?;
+        let api_key = config.api_key()?;
+        let llm = Self::create_provider_for_model(&api_key, &entry)?;
+        self.llm = llm;
+        self.current_model_id = model_id.to_string();
+        Ok(())
     }
 
     pub fn history(&self) -> &[Message] {

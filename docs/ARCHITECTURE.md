@@ -222,6 +222,8 @@ system_prompt = "..."
 [tools]
 enabled = ["read_file", "write_file", "list_directory", "exec_command"]
 
+# 多模型时，每个 [[llm.models]] 可配置 tools（空=全部）、enable_search（qwen3.5-plus 联网搜索）
+
 [ui]
 show_stats = true
 show_pet = true
