@@ -928,6 +928,62 @@ const TYPING_FAST_THRESHOLD: u32 = 15;
 const TYPING_DECAY_PER_TICK: u32 = 1;
 const TYPING_BOOST_PER_KEY: u32 = 4;
 
+/// Session picker popup state for /load command.
+struct SessionPicker {
+    visible: bool,
+    selected: usize,
+    sessions: Vec<session::SessionData>,
+}
+
+impl SessionPicker {
+    fn new() -> Self {
+        Self {
+            visible: false,
+            selected: 0,
+            sessions: Vec::new(),
+        }
+    }
+
+    fn open(&mut self) {
+        match session::list_sessions() {
+            Ok(sessions) => {
+                self.sessions = sessions;
+                self.selected = 0;
+                self.visible = !self.sessions.is_empty();
+            }
+            Err(_) => {
+                self.visible = false;
+            }
+        }
+    }
+
+    fn move_up(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+        } else if !self.sessions.is_empty() {
+            self.selected = self.sessions.len() - 1;
+        }
+    }
+
+    fn move_down(&mut self) {
+        if self.selected + 1 < self.sessions.len() {
+            self.selected += 1;
+        } else {
+            self.selected = 0;
+        }
+    }
+
+    fn selected_session(&self) -> Option<&session::SessionData> {
+        self.sessions.get(self.selected)
+    }
+
+    fn dismiss(&mut self) {
+        self.visible = false;
+        self.sessions.clear();
+        self.selected = 0;
+    }
+}
+
 pub struct RatatuiUi {
     anim_tick: u32,
     idle_ticks: u32,
@@ -935,6 +991,7 @@ pub struct RatatuiUi {
     header_widgets: Vec<Box<dyn HeaderWidget>>,
     first_use_date: Option<chrono::NaiveDate>,
     autocomplete: SlashAutocomplete,
+    session_picker: SessionPicker,
     tabs: Vec<SessionTab>,
     active_tab: usize,
     config: AppConfig,
@@ -960,6 +1017,7 @@ impl RatatuiUi {
             header_widgets,
             first_use_date: ensure_first_use_date(),
             autocomplete: SlashAutocomplete::new(),
+            session_picker: SessionPicker::new(),
             tabs: Vec::new(),
             active_tab: 0,
             config,
@@ -1530,6 +1588,69 @@ impl RatatuiUi {
                 self.render_autocomplete(f, input_area);
             }
         }
+
+        // Session picker popup (centered)
+        if self.session_picker.visible {
+            self.render_session_picker(f);
+        }
+    }
+
+    fn render_session_picker(&self, f: &mut Frame) {
+        let area = f.area();
+        let popup_h = (self.session_picker.sessions.len() as u16 + 4).min(area.height - 4);
+        let popup_w = 60u16.min(area.width - 4);
+        let popup_area = Rect {
+            x: (area.width - popup_w) / 2,
+            y: (area.height - popup_h) / 2,
+            width: popup_w,
+            height: popup_h,
+        };
+
+        f.render_widget(Clear, popup_area);
+
+        let mut lines: Vec<Line> = Vec::new();
+        lines.push(Line::from(Span::styled(
+            " ↑/↓ 选择  Enter 加载  Esc 取消",
+            Style::default().fg(Color::DarkGray),
+        )));
+        lines.push(Line::from(""));
+
+        for (i, s) in self.session_picker.sessions.iter().enumerate() {
+            let is_selected = i == self.session_picker.selected;
+            let label = format!(
+                " {} │ {} │ msgs: {}",
+                s.name,
+                s.created_at,
+                s.ui_messages.len()
+            );
+            if is_selected {
+                lines.push(Line::from(Span::styled(
+                    format!("▶ {}", label),
+                    Style::default()
+                        .bg(Color::Cyan)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD),
+                )));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", label),
+                    Style::default().fg(Color::White),
+                )));
+            }
+        }
+
+        let popup = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" 加载会话 ")
+                .title_style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .border_style(Style::default().fg(Color::Cyan)),
+        );
+        f.render_widget(popup, popup_area);
     }
 
     fn handle_command(&mut self, cmd: &str) -> Option<UiExitAction> {
@@ -1652,9 +1773,12 @@ impl RatatuiUi {
             }
             "/load" => {
                 if arg.is_empty() {
-                    self.active_mut()
-                        .messages
-                        .push("Usage: /load <session_id>".into());
+                    self.session_picker.open();
+                    if !self.session_picker.visible {
+                        self.active_mut()
+                            .messages
+                            .push("[No saved sessions found]".into());
+                    }
                 } else {
                     match self.load_session_as_tab(arg) {
                         Ok(()) => {}
@@ -1890,6 +2014,31 @@ impl RatatuiUi {
                             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 exit_action = UiExitAction::Quit;
                                 break;
+                            }
+                            // Session picker navigation
+                            KeyCode::Up if self.session_picker.visible => {
+                                self.session_picker.move_up();
+                                continue;
+                            }
+                            KeyCode::Down if self.session_picker.visible => {
+                                self.session_picker.move_down();
+                                continue;
+                            }
+                            KeyCode::Enter if self.session_picker.visible => {
+                                if let Some(s) = self.session_picker.selected_session() {
+                                    let id = s.id.clone();
+                                    self.session_picker.dismiss();
+                                    if let Err(e) = self.load_session_as_tab(&id) {
+                                        self.active_mut()
+                                            .messages
+                                            .push(format!("Error loading session: {}", e));
+                                    }
+                                }
+                                continue;
+                            }
+                            KeyCode::Esc if self.session_picker.visible => {
+                                self.session_picker.dismiss();
+                                continue;
                             }
                             // Y/N for tool confirmation
                             KeyCode::Char('y' | 'Y') if self.active().pending_confirm.is_some() => {

@@ -33,14 +33,51 @@ fn assess_bash_risk(arguments: &str) -> RiskLevel {
 fn classify_bash_command(command: &str) -> RiskLevel {
     let cmd = command.trim();
 
-    for pattern in DANGEROUS_PATTERNS {
-        if cmd_matches(cmd, pattern) {
+    // Split by && and || to evaluate each sub-command
+    let sub_commands: Vec<&str> = cmd
+        .split("&&")
+        .flat_map(|s| s.split("||"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let mut worst = RiskLevel::Safe;
+    for sub in &sub_commands {
+        let level = classify_single_command(sub);
+        if level == RiskLevel::Dangerous {
             return RiskLevel::Dangerous;
+        }
+        if level == RiskLevel::Moderate && worst == RiskLevel::Safe {
+            worst = RiskLevel::Moderate;
+        }
+    }
+    worst
+}
+
+fn classify_single_command(cmd: &str) -> RiskLevel {
+    // Check dangerous patterns first
+    let pipe_segments: Vec<&str> = cmd.split('|').map(|s| s.trim()).collect();
+    for seg in &pipe_segments {
+        let first_word = seg.split_whitespace().next().unwrap_or("");
+        for pattern in DANGEROUS_COMMAND_WORDS {
+            if first_word == *pattern {
+                return RiskLevel::Dangerous;
+            }
         }
     }
 
+    // Check for dangerous redirects (> or >> to real files, not /dev/null)
+    if has_dangerous_redirect(cmd) {
+        return RiskLevel::Dangerous;
+    }
+
+    // Check safe patterns
+    let first_word = cmd.split_whitespace().next().unwrap_or("");
     for pattern in SAFE_PATTERNS {
-        if cmd_starts_with_any(cmd, pattern) {
+        if first_word == *pattern {
+            return RiskLevel::Safe;
+        }
+        if first_word.contains('/') && first_word.ends_with(pattern) {
             return RiskLevel::Safe;
         }
     }
@@ -48,44 +85,46 @@ fn classify_bash_command(command: &str) -> RiskLevel {
     RiskLevel::Moderate
 }
 
-fn cmd_matches(cmd: &str, pattern: &str) -> bool {
-    let parts: Vec<&str> = cmd.split_whitespace().collect();
-    let pipe_segments: Vec<&str> = cmd.split('|').collect();
-
-    for part in &parts {
-        if *part == pattern {
-            return true;
-        }
-    }
-
-    if pattern == ">" || pattern == ">>" {
-        return cmd.contains(pattern);
-    }
-
-    for seg in &pipe_segments {
-        let seg = seg.trim();
-        if let Some(first_word) = seg.split_whitespace().next() {
-            if first_word == pattern {
+fn has_dangerous_redirect(cmd: &str) -> bool {
+    let mut i = 0;
+    let chars: Vec<char> = cmd.chars().collect();
+    while i < chars.len() {
+        // Skip fd redirects like 2> (which are usually stderr to /dev/null)
+        if chars[i] == '>' {
+            // Look at what follows the >
+            let mut j = i + 1;
+            if j < chars.len() && chars[j] == '>' {
+                j += 1; // handle >>
+            }
+            while j < chars.len() && chars[j] == ' ' {
+                j += 1;
+            }
+            let target: String = chars[j..]
+                .iter()
+                .take_while(|c| !c.is_whitespace())
+                .collect();
+            // Redirecting to /dev/null is safe
+            if target != "/dev/null" && !target.is_empty() {
+                // Check if this is an fd redirect like 2>/dev/null
+                if i > 0 && chars[i - 1].is_ascii_digit() {
+                    let target_check: String = chars[j..]
+                        .iter()
+                        .take_while(|c| !c.is_whitespace())
+                        .collect();
+                    if target_check == "/dev/null" {
+                        i = j;
+                        continue;
+                    }
+                }
                 return true;
             }
         }
-    }
-
-    false
-}
-
-fn cmd_starts_with_any(cmd: &str, prefix: &str) -> bool {
-    let first = cmd.split_whitespace().next().unwrap_or("");
-    if first == prefix {
-        return true;
-    }
-    if first.ends_with(prefix) && first.contains('/') {
-        return true;
+        i += 1;
     }
     false
 }
 
-const DANGEROUS_PATTERNS: &[&str] = &[
+const DANGEROUS_COMMAND_WORDS: &[&str] = &[
     "rm",
     "rmdir",
     "sudo",
@@ -110,11 +149,6 @@ const DANGEROUS_PATTERNS: &[&str] = &[
     "useradd",
     "userdel",
     "passwd",
-    "curl|bash",
-    "curl|sh",
-    "wget|bash",
-    "wget|sh",
-    ">",
 ];
 
 const SAFE_PATTERNS: &[&str] = &[
@@ -227,9 +261,40 @@ mod tests {
     }
 
     #[test]
-    fn test_redirect_is_dangerous() {
+    fn test_redirect_to_file_is_dangerous() {
         assert_eq!(
             assess_risk("bash", r#"{"command": "echo x > /etc/hosts"}"#),
+            RiskLevel::Dangerous
+        );
+    }
+
+    #[test]
+    fn test_redirect_to_devnull_is_safe() {
+        assert_eq!(
+            assess_risk(
+                "bash",
+                r#"{"command": "ls -l hello* 2>/dev/null || echo not found"}"#
+            ),
+            RiskLevel::Safe
+        );
+        assert_eq!(
+            assess_risk("bash", r#"{"command": "cat file 2> /dev/null"}"#),
+            RiskLevel::Safe
+        );
+    }
+
+    #[test]
+    fn test_compound_commands() {
+        assert_eq!(
+            assess_risk("bash", r#"{"command": "ls -la && echo done"}"#),
+            RiskLevel::Safe
+        );
+        assert_eq!(
+            assess_risk("bash", r#"{"command": "ls -la || echo fallback"}"#),
+            RiskLevel::Safe
+        );
+        assert_eq!(
+            assess_risk("bash", r#"{"command": "ls && rm -rf /"}"#),
             RiskLevel::Dangerous
         );
     }
