@@ -48,3 +48,8 @@ miniclaw 是一个用 Rust 构建的终端 AI 助手，核心组件：
   - 异步测试使用 `tokio::runtime::Runtime::new().unwrap()` + `block_on`
   - 测试元信息：验证 `name()`、`description()`、`parameters_schema()` 的正确性
 - **验证流程**：`cargo build 2>&1 && cargo test 2>&1`，两步都成功才算完成
+
+## 格式检查
+
+- **每次修改代码后必须检查格式**：执行 `cargo fmt --check` 确保符合 rustfmt 规范；若失败则运行 `cargo fmt` 自动修复
+- **CI 流程**：`.github/workflows/ci.yml` 会执行 `cargo fmt --check`，格式错误会导致 CI 失败

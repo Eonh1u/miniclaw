@@ -241,6 +241,7 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-27 | 修复 config.rs `get_model_entry` rustfmt 格式；开发规范新增「格式检查」：每次修改后执行 `cargo fmt --check` |
 | 2026-02-27 | 按模型配置工具：`ModelEntry.tools`（空=全部工具）、`enable_search`（qwen3.5-plus 联网搜索）；ChatRequest 传递 enable_search；Agent 按模型过滤 tools |
 | 2026-02-27 | 多模型支持：配置 `[[llm.models]]` 列表；`/model` 命令弹出方向键选择模型弹窗（与 /load 一致）；会话内切换；`current_model_id` 持久化 |
 | 2026-02-27 | 新增部署支持：`scripts/install.sh` 安装脚本（自动安装 Rust、系统依赖、构建并安装到 ~/.local/bin）；`docs/DEPLOYMENT.md` 部署文档 |

@@ -244,15 +244,18 @@ impl AppConfig {
     /// Get model entry by id. Returns None if not found.
     /// Resolves context_window/max_tokens 0 to [llm] defaults.
     pub fn get_model_entry(&self, id: &str) -> Option<ModelEntry> {
-        self.list_models().into_iter().find(|m| m.id == id).map(|mut m| {
-            if m.context_window == 0 {
-                m.context_window = self.llm.context_window;
-            }
-            if m.max_tokens == 0 {
-                m.max_tokens = self.llm.max_tokens;
-            }
-            m
-        })
+        self.list_models()
+            .into_iter()
+            .find(|m| m.id == id)
+            .map(|mut m| {
+                if m.context_window == 0 {
+                    m.context_window = self.llm.context_window;
+                }
+                if m.max_tokens == 0 {
+                    m.max_tokens = self.llm.max_tokens;
+                }
+                m
+            })
     }
 }
 
