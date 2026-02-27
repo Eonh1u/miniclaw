@@ -36,6 +36,20 @@ src/
 
 ## Getting Started
 
+### Quick Install (Recommended)
+
+```bash
+git clone https://github.com/Eonh1u/miniclaw.git && cd miniclaw
+chmod +x scripts/install.sh && ./scripts/install.sh
+export PATH="$HOME/.local/bin:$PATH"
+export LLM_API_KEY="your-key-here"
+miniclaw
+```
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for details.
+
+### Manual Build
+
 ```bash
 # Build
 cargo build
@@ -79,6 +93,7 @@ Or edit `~/.miniclaw/config.toml` directly (auto-generated on first run).
 
 ## Documentation
 
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Deployment and installation guide
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Architecture design, component details, data flow
 - [docs/ROADMAP.md](docs/ROADMAP.md) — Project roadmap, implementation status, TODO list
 
