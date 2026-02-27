@@ -1321,8 +1321,9 @@ impl RatatuiUi {
     }
 
     fn render_session_panel(tab: &mut SessionTab, is_active: bool, f: &mut Frame, area: Rect) {
-        let input_line_count = tab.input.matches('\n').count() + 1;
-        let input_h = (input_line_count as u16 + 2).max(3).min(8);
+        let wrap_width = area.width.saturating_sub(2) as usize; // minus borders
+        let input_rendered_lines = Self::count_wrapped_lines(&tab.input, wrap_width);
+        let input_h = (input_rendered_lines as u16 + 2).max(3).min(10);
 
         let rows = Layout::vertical([Constraint::Min(3), Constraint::Length(input_h)]).split(area);
 
@@ -1426,7 +1427,9 @@ impl RatatuiUi {
         f.render_widget(p, area);
 
         if is_active {
-            let (cursor_row, cursor_col) = Self::cursor_row_col(&tab.input, tab.cursor_position);
+            let wrap_width = area.width.saturating_sub(2) as usize;
+            let (cursor_row, cursor_col) =
+                Self::cursor_row_col_wrapped(&tab.input, tab.cursor_position, wrap_width);
             f.set_cursor_position((
                 area.x + cursor_col as u16 + 1,
                 area.y + cursor_row as u16 + 1,
@@ -1434,18 +1437,49 @@ impl RatatuiUi {
         }
     }
 
-    fn cursor_row_col(input: &str, cursor_pos: usize) -> (usize, usize) {
+    fn char_display_width(c: char) -> usize {
+        if c.is_ascii() {
+            1
+        } else {
+            2
+        }
+    }
+
+    fn count_wrapped_lines(text: &str, wrap_width: usize) -> usize {
+        if wrap_width == 0 {
+            return text.lines().count().max(1);
+        }
+        let mut total = 0;
+        for line in text.split('\n') {
+            let line_width: usize = line.chars().map(Self::char_display_width).sum();
+            if line_width == 0 {
+                total += 1;
+            } else {
+                total += (line_width + wrap_width - 1) / wrap_width;
+            }
+        }
+        total.max(1)
+    }
+
+    fn cursor_row_col_wrapped(input: &str, cursor_pos: usize, wrap_width: usize) -> (usize, usize) {
         let before_cursor: String = input.chars().take(cursor_pos).collect();
-        let row = before_cursor.matches('\n').count();
-        let last_newline = before_cursor.rfind('\n');
-        let col_str = match last_newline {
-            Some(pos) => &before_cursor[pos + 1..],
-            None => &before_cursor,
-        };
-        let col: usize = col_str
-            .chars()
-            .map(|c| if c.is_ascii() { 1 } else { 2 })
-            .sum();
+        let mut row = 0usize;
+        let mut col = 0usize;
+
+        for line in before_cursor.split('\n') {
+            let line_width: usize = line.chars().map(Self::char_display_width).sum();
+            if wrap_width > 0 && line_width > wrap_width {
+                row += line_width / wrap_width;
+                col = line_width % wrap_width;
+            } else {
+                col = line_width;
+            }
+            row += 1; // newline advances row
+        }
+        // The last split segment doesn't end with \n, so undo the extra row
+        if row > 0 {
+            row -= 1;
+        }
         (row, col)
     }
 
