@@ -22,6 +22,8 @@ pub struct WidgetContext<'a> {
     pub first_use_date: Option<chrono::NaiveDate>,
     pub context_used: u64,
     pub context_limit: u64,
+    /// Current model id (e.g. "coding_plan/qwen3.5-plus")
+    pub current_model_id: &'a str,
 }
 
 /// Pluggable header widget trait.

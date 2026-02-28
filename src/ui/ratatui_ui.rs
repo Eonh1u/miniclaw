@@ -503,9 +503,17 @@ impl HeaderWidget for StatsWidget {
             Color::Green
         };
 
+        let model_short = if ctx.current_model_id.len() > 24 {
+            format!("{}...", &ctx.current_model_id[..21])
+        } else {
+            ctx.current_model_id.to_string()
+        };
         let lines = vec![
             status_line,
-            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Model: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(model_short, Style::default().fg(Color::Cyan)),
+            ]),
             Line::from(vec![
                 Span::styled("  In: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
@@ -677,6 +685,7 @@ struct SessionTab {
     pending_confirm: Option<String>,
     context_used: u64,
     context_limit: u64,
+    current_model_id: String,
 }
 
 impl SessionTab {
@@ -684,6 +693,7 @@ impl SessionTab {
         let stats = agent.stats.clone();
         let ctx_used = agent.estimate_context_tokens();
         let ctx_limit = agent.context_window();
+        let current_model_id = agent.current_model_id().to_string();
         Self {
             id,
             name,
@@ -707,6 +717,7 @@ impl SessionTab {
             pending_confirm: None,
             context_used: ctx_used,
             context_limit: ctx_limit,
+            current_model_id,
         }
     }
 
@@ -749,7 +760,7 @@ impl SessionTab {
             .agent
             .as_ref()
             .map(|a| (a.history().to_vec(), a.current_model_id().to_string()))
-            .unwrap_or_else(|| (Vec::new(), String::new()));
+            .unwrap_or_else(|| (Vec::new(), self.current_model_id.clone()));
         SessionData {
             id: self.id.clone(),
             name: self.name.clone(),
@@ -1539,10 +1550,13 @@ impl RatatuiUi {
                 Self::cursor_row_col_wrapped(&tab.input, tab.cursor_position, wrap_width);
             let max_visible_row = area.height.saturating_sub(2) as usize;
             let display_row = cursor_row.min(max_visible_row);
-            f.set_cursor_position((
-                area.x + cursor_col as u16 + 1,
-                area.y + display_row as u16 + 1,
-            ));
+            // Clamp cursor to buffer bounds to avoid panic when terminal is very small
+            let buf = f.area();
+            let cursor_x =
+                (area.x + cursor_col as u16 + 1).min(buf.x + buf.width.saturating_sub(1));
+            let cursor_y =
+                (area.y + display_row as u16 + 1).min(buf.y + buf.height.saturating_sub(1));
+            f.set_cursor_position((cursor_x, cursor_y));
         }
     }
 
@@ -1732,6 +1746,7 @@ impl RatatuiUi {
             first_use_date: self.first_use_date,
             context_used: tab.context_used,
             context_limit: tab.context_limit,
+            current_model_id: &tab.current_model_id,
         };
 
         let constraints: Vec<Constraint> = self
@@ -1753,6 +1768,28 @@ impl RatatuiUi {
 
     fn draw_ui(&mut self, f: &mut Frame) {
         self.clamp_active_tab();
+        // Sync context from agent to tab so Ctx display is always up-to-date (e.g. after /clear)
+        let active_idx = self.active_tab.min(self.tabs.len().saturating_sub(1));
+        if active_idx < self.tabs.len() {
+            let (ctx_used, ctx_limit, model_id) = self.tabs[active_idx]
+                .agent
+                .as_ref()
+                .map(|a| {
+                    (
+                        a.estimate_context_tokens(),
+                        a.context_window(),
+                        a.current_model_id().to_string(),
+                    )
+                })
+                .unwrap_or((
+                    self.tabs[active_idx].context_used,
+                    self.tabs[active_idx].context_limit,
+                    self.tabs[active_idx].current_model_id.clone(),
+                ));
+            self.tabs[active_idx].context_used = ctx_used;
+            self.tabs[active_idx].context_limit = ctx_limit;
+            self.tabs[active_idx].current_model_id = model_id;
+        }
         let area = f.area();
         let header_h = if self.header_widgets.is_empty() {
             0
@@ -1934,15 +1971,16 @@ impl RatatuiUi {
                 return Some(UiExitAction::Quit);
             }
             "/clear" => {
-                if let Some(agent) = self.active_mut().agent.as_mut() {
+                let tab = self.active_mut();
+                if let Some(agent) = tab.agent.as_mut() {
                     agent.clear_history();
+                    tab.context_used = agent.estimate_context_tokens();
+                    tab.context_limit = agent.context_window();
                 }
-                self.active_mut().messages.clear();
-                self.active_mut()
-                    .messages
-                    .push("Conversation cleared.".into());
-                self.active_mut().scroll_offset = 0;
-                self.active_mut().follow_tail = true;
+                tab.messages.clear();
+                tab.messages.push("Conversation cleared.".into());
+                tab.scroll_offset = 0;
+                tab.follow_tail = true;
             }
             "/new" => {
                 let name = if arg.is_empty() {
@@ -2121,12 +2159,7 @@ impl RatatuiUi {
                             .messages
                             .push("[Cannot switch model while processing]".into());
                     } else {
-                        let current_id = self
-                            .active()
-                            .agent
-                            .as_ref()
-                            .map(|a| a.current_model_id().to_string())
-                            .unwrap_or_default();
+                        let current_id = self.active().current_model_id.clone();
                         self.model_picker.open(models, &current_id);
                     }
                 } else if self.active().processing {
@@ -2135,22 +2168,21 @@ impl RatatuiUi {
                         .push("[Cannot switch model while processing]".into());
                 } else {
                     let config = self.config.clone();
-                    if let Some(agent) = self.active_mut().agent.as_mut() {
+                    let tab = self.active_mut();
+                    if let Some(agent) = tab.agent.as_mut() {
                         match agent.switch_model(arg, &config) {
                             Ok(()) => {
+                                tab.current_model_id = agent.current_model_id().to_string();
                                 let display = agent.current_model_display();
-                                self.active_mut()
-                                    .messages
+                                tab.messages
                                     .push(format!("[Switched to model: {}]", display));
                             }
                             Err(e) => {
-                                self.active_mut().messages.push(format!("Error: {}", e));
+                                tab.messages.push(format!("Error: {}", e));
                             }
                         }
                     } else {
-                        self.active_mut()
-                            .messages
-                            .push("[No agent available to switch]".into());
+                        tab.messages.push("[No agent available to switch]".into());
                     }
                 }
             }
@@ -2300,6 +2332,8 @@ impl RatatuiUi {
                                     tab.cached_stats = returned_agent.stats.clone();
                                     tab.context_used = returned_agent.estimate_context_tokens();
                                     tab.context_limit = returned_agent.context_window();
+                                    tab.current_model_id =
+                                        returned_agent.current_model_id().to_string();
                                     tab.agent = Some(returned_agent);
                                 }
                                 Ok(Err(e)) => {
@@ -2378,19 +2412,20 @@ impl RatatuiUi {
                                     let model_id = m.id.clone();
                                     self.model_picker.dismiss();
                                     let config = self.config.clone();
-                                    if let Some(agent) = self.active_mut().agent.as_mut() {
+                                    let tab = self.active_mut();
+                                    if let Some(agent) = tab.agent.as_mut() {
                                         match agent.switch_model(&model_id, &config) {
                                             Ok(()) => {
+                                                tab.current_model_id =
+                                                    agent.current_model_id().to_string();
                                                 let display = agent.current_model_display();
-                                                self.active_mut().messages.push(format!(
+                                                tab.messages.push(format!(
                                                     "[Switched to model: {}]",
                                                     display
                                                 ));
                                             }
                                             Err(e) => {
-                                                self.active_mut()
-                                                    .messages
-                                                    .push(format!("Error: {}", e));
+                                                tab.messages.push(format!("Error: {}", e));
                                             }
                                         }
                                     }

@@ -14,7 +14,7 @@ use crate::llm::LlmProvider;
 use crate::rules;
 use crate::tools::risk::{self, RiskLevel};
 use crate::tools::{create_default_router, ToolRouter};
-use crate::types::{ChatRequest, ChatResponse, Message, StreamChunk, TokenUsage};
+use crate::types::{ChatRequest, ChatResponse, Message, Role, StreamChunk, TokenUsage};
 
 /// Events emitted by the Agent during processing, allowing the TUI
 /// to display real-time progress (tool calls, intermediate text, etc.).
@@ -323,10 +323,32 @@ List files and directories at a path with optional recursive traversal.
                 self.config.llm.max_tokens
             };
 
-            let tools = self.tools_for_model(&model_entry);
+            let mut tools = self.tools_for_model(&model_entry);
+            let mut request_messages = self.messages.clone();
+            // When model has native web search: inject strong instruction and modify bash tool
+            if model_entry.enable_search {
+                if let Some(first) = request_messages.first_mut() {
+                    if first.role == Role::System {
+                        first.content.push_str(
+                            "\n\n## CRITICAL: Native Web Search\n\
+                            You have built-in web search. NEVER use bash/curl/wget for web search. \
+                            For real-time info, news, or any web query, use your native search directly.",
+                        );
+                    }
+                }
+                // Modify bash description to explicitly forbid web search usage
+                for t in &mut tools {
+                    if t.name == "bash" {
+                        t.description.push_str(
+                            " Do NOT use curl/wget for web search—use your native search instead.",
+                        );
+                        break;
+                    }
+                }
+            }
             let request = ChatRequest {
                 model: model_entry.model.clone(),
-                messages: self.messages.clone(),
+                messages: request_messages,
                 tools,
                 max_tokens,
                 enable_search: if model_entry.enable_search {
