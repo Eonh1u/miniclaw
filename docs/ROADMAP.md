@@ -344,6 +344,7 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-28 | 中断功能：Ctrl+. 或 /stop 取消正在进行的 agent 任务，恢复会话状态 |
 | 2026-02-28 | enable_search 强化：CRITICAL 原生搜索指令 + bash 描述禁止 curl；状态栏显示当前模型 |
 | 2026-02-28 | 修复：终端过小时 set_cursor_position panic；/clear 后 Ctx 指标不更新 |
 | 2026-02-28 | 文档：Git 提交规范（英文 commit message + AI 协助时 Co-authored-by） |

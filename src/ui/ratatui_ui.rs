@@ -82,6 +82,10 @@ const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "List or switch model (/model [id])",
     },
     SlashCommand {
+        name: "/stop",
+        description: "Interrupt current agent (when processing)",
+    },
+    SlashCommand {
         name: "/quit",
         description: "Exit the program",
     },
@@ -1970,6 +1974,24 @@ impl RatatuiUi {
                 }
                 return Some(UiExitAction::Quit);
             }
+            "/stop" => {
+                if self.active().processing {
+                    let tab_idx = self.active_tab.min(self.tabs.len().saturating_sub(1));
+                    let handle = self.tabs[tab_idx].agent_handle.take();
+                    if let Some(h) = handle {
+                        h.abort();
+                        if let Err(e) = self.restore_agent_after_abort(tab_idx) {
+                            self.tabs[tab_idx]
+                                .messages
+                                .push(format!("Error restoring: {}", e));
+                        } else {
+                            self.tabs[tab_idx].messages.push("  ⏹ 已中断".to_string());
+                        }
+                    }
+                } else {
+                    self.active_mut().messages.push("[Not processing]".into());
+                }
+            }
             "/clear" => {
                 let tab = self.active_mut();
                 if let Some(agent) = tab.agent.as_mut() {
@@ -2202,12 +2224,14 @@ impl RatatuiUi {
                     "  /stats             Toggle stats panel",
                     "  /pet               Toggle pet panel",
                     "  /model [id]        List models or switch to model",
+                    "  /stop              Interrupt agent (when processing)",
                     "  /quit              Exit the program",
                     "",
                     "  Shift+Enter/Alt+N  Insert newline (multi-line input)",
                     "  Ctrl+Left/Right    Switch session tabs",
                     "  PageUp/PageDown    Scroll conversation",
                     "  Shift+mouse drag   Select and copy text",
+                    "  Ctrl+.             Interrupt agent (when processing)",
                     "  Ctrl+C             Exit the program",
                 ];
                 for line in help {
@@ -2242,6 +2266,49 @@ impl RatatuiUi {
         self.active_mut()
             .messages
             .push(format!("[Loaded session: {}]", data.name));
+        Ok(())
+    }
+
+    /// Restore agent after abort. Tries to load from saved session, else creates fresh agent.
+    fn restore_agent_after_abort(&mut self, tab_idx: usize) -> Result<()> {
+        let tab = &mut self.tabs[tab_idx];
+        tab.event_rx = None;
+        tab.confirm_tx = None;
+        tab.pending_confirm = None;
+        if let Ok(data) = session::load_session(&tab.id) {
+            let model_id = if data.current_model_id.is_empty() {
+                None
+            } else {
+                Some(data.current_model_id.as_str())
+            };
+            let mut agent = Agent::create_with_model(&self.config, &self.project_root, model_id)?;
+            agent.set_messages(data.agent_messages);
+            agent.stats = data.stats.to_session_stats();
+            tab.agent = Some(agent);
+            tab.cached_stats = data.stats.to_session_stats();
+            if let Some(a) = tab.agent.as_ref() {
+                tab.context_used = a.estimate_context_tokens();
+                tab.context_limit = a.context_window();
+                tab.current_model_id = a.current_model_id().to_string();
+            }
+        } else {
+            let model_id = if tab.current_model_id.is_empty() {
+                None
+            } else {
+                Some(tab.current_model_id.as_str())
+            };
+            let agent = Agent::create_with_model(&self.config, &self.project_root, model_id)?;
+            tab.agent = Some(agent);
+            if let Some(a) = tab.agent.as_ref() {
+                tab.context_used = a.estimate_context_tokens();
+                tab.context_limit = a.context_window();
+                tab.current_model_id = a.current_model_id().to_string();
+            }
+        }
+        tab.processing = false;
+        tab.pet_state = PetState::Idle;
+        tab.streaming_message_idx = None;
+        tab.tool_progress_idx = None;
         Ok(())
     }
 
@@ -2372,6 +2439,27 @@ impl RatatuiUi {
                             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 exit_action = UiExitAction::Quit;
                                 break;
+                            }
+                            // Interrupt: Ctrl+. (period) - stop agent when processing
+                            KeyCode::Char('.') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if self.active().processing {
+                                    let tab_idx =
+                                        self.active_tab.min(self.tabs.len().saturating_sub(1));
+                                    let handle = self.tabs[tab_idx].agent_handle.take();
+                                    if let Some(h) = handle {
+                                        h.abort();
+                                        if let Err(e) = self.restore_agent_after_abort(tab_idx) {
+                                            self.tabs[tab_idx]
+                                                .messages
+                                                .push(format!("Error restoring: {}", e));
+                                        } else {
+                                            self.tabs[tab_idx]
+                                                .messages
+                                                .push("  ⏹ 已中断".to_string());
+                                        }
+                                    }
+                                }
+                                continue;
                             }
                             // Session picker navigation
                             KeyCode::Up if self.session_picker.visible => {
