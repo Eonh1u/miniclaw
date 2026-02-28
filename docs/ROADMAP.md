@@ -344,6 +344,7 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-28 | 文档：Git 提交规范（英文 commit message + AI 协助时 Co-authored-by） |
 | 2026-02-28 | 多行输入框：Up/Down 光标上下行移动；鼠标点击定位光标 |
 | 2026-02-27 | Provider 层级：ProviderConfig + RawModelEntry；[llm.providers.xxx] 统一配置；模型 provider_id 继承；id 格式 provider_id/model_id；添加 kimi-k2.5、glm-5、MiniMax-M2.5 等 Coding Plan 模型 |
 | 2026-02-27 | 支持 Coding Plan：ModelEntry 新增 api_key、api_key_env；api_key_for_model 按模型解析；ROADMAP 添加 Coding Plan 配置示例 |

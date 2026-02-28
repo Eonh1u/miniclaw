@@ -58,3 +58,8 @@ miniclaw 是一个用 Rust 构建的终端 AI 助手，核心组件：
 
 - **每次修改代码后必须检查格式**：执行 `cargo fmt --check` 确保符合 rustfmt 规范；若失败则运行 `cargo fmt` 自动修复
 - **CI 流程**：`.github/workflows/ci.yml` 会执行 `cargo fmt --check`，格式错误会导致 CI 失败
+
+## Git 提交规范
+
+- **提交信息使用英文** — 所有 commit message 必须使用英文
+- **AI 协助时添加 Co-authored-by** — 若有 AI agent 协助完成变更，在提交信息末尾添加 `Co-authored-by: Cursor <cursoragent@cursor.com>`（或对应的 agent 身份）；不要添加 Made-with: Cursor 等

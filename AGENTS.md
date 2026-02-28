@@ -29,7 +29,9 @@ Auto-generated at `~/.miniclaw/config.toml` on first run. Default provider is Qw
 
 ### Git commit conventions
 
-When merging feature branch commits to `main`, squash all related changes (code + docs + tests) for the same feature into a single commit. Keep `main` history clean with one commit per feature/fix. On the feature branch itself, multiple small commits are fine.
+- **Commit messages in English** — Use English for all commit messages.
+- **Co-authored-by for AI assistance** — When an AI agent assists with the change, append `Co-authored-by: Cursor <cursoragent@cursor.com>` (or the appropriate agent identity) at the end of the commit message. Do not add "Made-with: Cursor" or similar.
+- When merging feature branch commits to `main`, squash all related changes (code + docs + tests) for the same feature into a single commit. Keep `main` history clean with one commit per feature/fix. On the feature branch itself, multiple small commits are fine.
 
 ### Hello world verification
 
