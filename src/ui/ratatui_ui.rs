@@ -1061,6 +1061,8 @@ pub struct RatatuiUi {
     project_root: PathBuf,
     tab_bar_rect: Rect,
     session_rects: Vec<Rect>,
+    /// Input area rect of the active session (for mouse click positioning).
+    active_input_rect: Rect,
 }
 
 impl RatatuiUi {
@@ -1088,6 +1090,7 @@ impl RatatuiUi {
             project_root,
             tab_bar_rect: Rect::default(),
             session_rects: Vec::new(),
+            active_input_rect: Rect::default(),
         }
     }
 
@@ -1184,6 +1187,7 @@ impl RatatuiUi {
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) {
+        let wrap_width = self.active_input_rect.width.saturating_sub(2) as usize;
         let tab = self.active_mut();
         match key.code {
             KeyCode::Char(c) => {
@@ -1242,6 +1246,30 @@ impl RatatuiUi {
             KeyCode::Right if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if tab.cursor_position < tab.char_count() {
                     tab.cursor_position += 1;
+                }
+            }
+            KeyCode::Up => {
+                if wrap_width > 0 {
+                    let (r, c) =
+                        Self::cursor_row_col_wrapped(&tab.input, tab.cursor_position, wrap_width);
+                    if r > 0 {
+                        let new_pos = Self::row_col_to_cursor_pos(&tab.input, r - 1, c, wrap_width);
+                        tab.cursor_position = new_pos;
+                    }
+                }
+            }
+            KeyCode::Down => {
+                if wrap_width > 0 {
+                    let (r, c) =
+                        Self::cursor_row_col_wrapped(&tab.input, tab.cursor_position, wrap_width);
+                    let max_row =
+                        Self::count_wrapped_lines(&tab.input, wrap_width).saturating_sub(1);
+                    if r < max_row {
+                        let new_pos = Self::row_col_to_cursor_pos(&tab.input, r + 1, c, wrap_width);
+                        tab.cursor_position = new_pos.min(tab.char_count());
+                    } else {
+                        tab.cursor_position = tab.char_count();
+                    }
                 }
             }
             KeyCode::Home => {
@@ -1366,6 +1394,13 @@ impl RatatuiUi {
 
         if tab_count == 1 {
             self.session_rects = vec![area];
+            let tab = &self.tabs[0];
+            let wrap_width = area.width.saturating_sub(2) as usize;
+            let input_rendered_lines = Self::count_wrapped_lines(&tab.input, wrap_width);
+            let input_h = (input_rendered_lines as u16 + 2).max(3).min(10);
+            let rows =
+                Layout::vertical([Constraint::Min(3), Constraint::Length(input_h)]).split(area);
+            self.active_input_rect = rows[1];
             Self::render_session_panel(&mut self.tabs[0], true, f, area);
             return;
         }
@@ -1380,7 +1415,16 @@ impl RatatuiUi {
 
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             let is_active = i == active;
-            Self::render_session_panel(tab, is_active, f, cols[i]);
+            let area = cols[i];
+            let wrap_width = area.width.saturating_sub(2) as usize;
+            let input_rendered_lines = Self::count_wrapped_lines(&tab.input, wrap_width);
+            let input_h = (input_rendered_lines as u16 + 2).max(3).min(10);
+            let rows =
+                Layout::vertical([Constraint::Min(3), Constraint::Length(input_h)]).split(area);
+            if is_active {
+                self.active_input_rect = rows[1];
+            }
+            Self::render_session_panel(tab, is_active, f, area);
         }
     }
 
@@ -1532,6 +1576,33 @@ impl RatatuiUi {
             }
         }
         row
+    }
+
+    /// Convert display (row, col) to cursor position. Inverse of cursor_row_col_wrapped.
+    fn row_col_to_cursor_pos(input: &str, row: usize, col: usize, wrap_width: usize) -> usize {
+        let mut cur_row = 0usize;
+        let mut cur_col = 0usize;
+        for (i, c) in input.chars().enumerate() {
+            if cur_row == row && cur_col >= col {
+                return i;
+            }
+            if cur_row > row {
+                return i;
+            }
+            if c == '\n' {
+                cur_row += 1;
+                cur_col = 0;
+            } else {
+                let cw = Self::char_display_width(c);
+                if wrap_width > 0 && cur_col + cw > wrap_width {
+                    cur_row += 1;
+                    cur_col = cw;
+                } else {
+                    cur_col += cw;
+                }
+            }
+        }
+        input.chars().count()
     }
 
     /// Calculate cursor (row, col) with character-by-character wrapping.
@@ -2494,6 +2565,37 @@ impl RatatuiUi {
                                 {
                                     self.active_tab = i;
                                     break;
+                                }
+                            }
+                            // Click in active session's input area: move cursor to click position
+                            if !self.tabs.is_empty() && !self.active().processing {
+                                let active_idx = self.active_tab.min(self.tabs.len() - 1);
+                                if active_idx < self.session_rects.len() {
+                                    let sess = self.session_rects[active_idx];
+                                    let input = self.tabs[active_idx].input.clone();
+                                    let wrap_width = sess.width.saturating_sub(2) as usize;
+                                    let input_rendered_lines =
+                                        Self::count_wrapped_lines(&input, wrap_width);
+                                    let input_h = (input_rendered_lines as u16 + 2).max(3).min(10);
+                                    let inp_y = sess.y + sess.height - input_h;
+                                    let content_x = sess.x + 1;
+                                    let content_y = inp_y + 1;
+                                    let content_w = sess.width.saturating_sub(2) as usize;
+                                    if mouse.column >= content_x
+                                        && mouse.column < sess.x + sess.width
+                                        && mouse.row >= content_y
+                                        && mouse.row < inp_y + input_h
+                                    {
+                                        let click_row = (mouse.row - content_y) as usize;
+                                        let click_col = (mouse.column - content_x) as usize;
+                                        let new_pos = Self::row_col_to_cursor_pos(
+                                            &input, click_row, click_col, content_w,
+                                        );
+                                        let tab = self.active_mut();
+                                        tab.cursor_position = new_pos.min(tab.char_count());
+                                        let input_snapshot = tab.input.clone();
+                                        self.autocomplete.update_filter(&input_snapshot);
+                                    }
                                 }
                             }
                         }

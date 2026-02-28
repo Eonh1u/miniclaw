@@ -127,6 +127,7 @@ miniclaw/
 - [x] 分屏同时展示多会话（左右等分列布局，活动会话青色边框，鼠标点击切换焦点）
 - [x] 会话自动保存（每次用户输入/AI 输出/退出时自动持久化到 `~/.miniclaw/sessions/`）
 - [x] 多行输入支持（Ctrl+J / Alt+Enter / Shift+Enter 换行，Enter 发送，输入框自动扩展）
+- [x] 多行输入光标上下行移动（Up/Down 键）、鼠标点击定位光标
 - [x] 待发送消息队列（处理中仍可输入，消息排队按序发送）
 - [x] 每个会话独立输入框（切换会话保留各自的输入内容）
 - [x] 对话滚动改进（PageUp/PageDown 快速翻页，鼠标滚轮，修复 scroll_offset 同步）
@@ -343,6 +344,7 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-28 | 多行输入框：Up/Down 光标上下行移动；鼠标点击定位光标 |
 | 2026-02-27 | Provider 层级：ProviderConfig + RawModelEntry；[llm.providers.xxx] 统一配置；模型 provider_id 继承；id 格式 provider_id/model_id；添加 kimi-k2.5、glm-5、MiniMax-M2.5 等 Coding Plan 模型 |
 | 2026-02-27 | 支持 Coding Plan：ModelEntry 新增 api_key、api_key_env；api_key_for_model 按模型解析；ROADMAP 添加 Coding Plan 配置示例 |
 | 2026-02-27 | 修复 config.rs `get_model_entry` rustfmt 格式；开发规范新增「格式检查」：每次修改后执行 `cargo fmt --check` |

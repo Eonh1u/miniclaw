@@ -85,16 +85,37 @@ fn classify_single_command(cmd: &str) -> RiskLevel {
     RiskLevel::Moderate
 }
 
+/// Safe redirect targets: temp dirs, /dev/null, and fd dup (2>&1).
+fn is_safe_redirect_target(target: &str) -> bool {
+    if target.is_empty() {
+        return true;
+    }
+    let t = target.trim();
+    if t == "/dev/null" {
+        return true;
+    }
+    // fd-to-fd redirect: 2>&1, 1>&2 - not writing to a real file
+    if t.starts_with('&') && t.len() > 1 && t[1..].chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    // /tmp, /tmp/..., /var/tmp, /var/tmp/... - standard temp locations for logs
+    if t == "/tmp" || t.starts_with("/tmp/") {
+        return true;
+    }
+    if t == "/var/tmp" || t.starts_with("/var/tmp/") {
+        return true;
+    }
+    false
+}
+
 fn has_dangerous_redirect(cmd: &str) -> bool {
     let mut i = 0;
     let chars: Vec<char> = cmd.chars().collect();
     while i < chars.len() {
-        // Skip fd redirects like 2> (which are usually stderr to /dev/null)
         if chars[i] == '>' {
-            // Look at what follows the >
             let mut j = i + 1;
             if j < chars.len() && chars[j] == '>' {
-                j += 1; // handle >>
+                j += 1;
             }
             while j < chars.len() && chars[j] == ' ' {
                 j += 1;
@@ -103,15 +124,13 @@ fn has_dangerous_redirect(cmd: &str) -> bool {
                 .iter()
                 .take_while(|c| !c.is_whitespace())
                 .collect();
-            // Redirecting to /dev/null is safe
-            if target != "/dev/null" && !target.is_empty() {
-                // Check if this is an fd redirect like 2>/dev/null
+            if !target.is_empty() && !is_safe_redirect_target(&target) {
                 if i > 0 && chars[i - 1].is_ascii_digit() {
                     let target_check: String = chars[j..]
                         .iter()
                         .take_while(|c| !c.is_whitespace())
                         .collect();
-                    if target_check == "/dev/null" {
+                    if is_safe_redirect_target(&target_check) {
                         i = j;
                         continue;
                     }
@@ -158,6 +177,8 @@ const SAFE_PATTERNS: &[&str] = &[
     "sed", // sed without -i is safe; with -i it modifies files but we'll allow it as moderate via fallback
     "sort", "uniq", "diff", "tree", "git", "cargo", "rustc", "rustup", "npm", "node", "python",
     "python3", "pip", "pip3", "go", "make", "cmake", "docker", "kubectl",
+    "cd",    // change directory - no side effects
+    "sleep", // wait - no side effects
 ];
 
 /// Generate a human-readable description for a tool call confirmation prompt.
@@ -279,6 +300,18 @@ mod tests {
         );
         assert_eq!(
             assess_risk("bash", r#"{"command": "cat file 2> /dev/null"}"#),
+            RiskLevel::Safe
+        );
+    }
+
+    #[test]
+    fn test_redirect_to_tmp_is_safe() {
+        // Common pattern: run app in background, redirect logs to /tmp
+        assert_eq!(
+            assess_risk(
+                "bash",
+                r#"{"command": "cd /root/code/todo_app && python3 -c \"from app import app; app.run()\" > /tmp/todo_app.log 2>&1 & sleep 2 && cat /tmp/todo_app.log"}"#
+            ),
             RiskLevel::Safe
         );
     }
