@@ -138,10 +138,17 @@ pub struct UiConfig {
     /// Show the pet animation panel in the header.
     #[serde(default = "bool_true")]
     pub show_pet: bool,
+    /// Pet name displayed in the pet panel.
+    #[serde(default = "default_pet_name")]
+    pub pet_name: String,
 }
 
 fn bool_true() -> bool {
     true
+}
+
+fn default_pet_name() -> String {
+    "huhu".to_string()
 }
 
 impl Default for UiConfig {
@@ -149,6 +156,7 @@ impl Default for UiConfig {
         Self {
             show_stats: true,
             show_pet: true,
+            pet_name: default_pet_name(),
         }
     }
 }

@@ -47,7 +47,9 @@ miniclaw/
     │   ├── write_file.rs     # 写文件工具（创建/覆盖）
     │   ├── edit.rs           # 编辑工具（精准文本替换）
     │   ├── bash.rs           # Bash 工具（执行 shell 命令）
-    │   └── list_directory.rs # 列目录工具
+    │   ├── list_directory.rs # 列目录工具
+    │   └── risk.rs           # 工具风险分级（Safe/Moderate/Dangerous）
+    ├── trusted_workspaces.rs # 可信工作区持久化（~/.miniclaw/trusted_workspaces.json）
     └── ui/
         ├── mod.rs            # HeaderWidget trait + WidgetContext
         ├── markdown.rs       # Markdown → ratatui 富文本转换
@@ -101,7 +103,7 @@ miniclaw/
 - [x] 实现 `bash`（执行 shell 命令，超时控制，输出截断）
 - [x] 实现 `edit`（精准文本替换，old_text 精确匹配，支持 replace_all）
 - [ ] 实现 `web_search`（网页搜索）
-- [ ] 工具权限/用户确认机制（危险操作前询问用户）
+- [x] 工具权限/用户确认机制（危险操作前询问用户；Trusted Workspace 可信目录自动通过）
 - [ ] 配置中 `tools.enabled` 列表实际生效（目前未过滤）
 
 ### 阶段 6：TUI 体验完善 🔶 进行中
@@ -135,6 +137,7 @@ miniclaw/
 - [x] 按模型配置工具列表（`tools` 字段，空=全部；`enable_search` 支持 qwen3.5-plus 联网搜索）
 - [x] 按模型配置 API Key（`api_key`、`api_key_env`），支持 Coding Plan 与按量计费混用
 - [x] Provider 层级：`[llm.providers.xxx]` 统一 base_url、api_key_env、api；模型 `provider_id` 继承；id 格式 `provider_id/model_id`
+- [x] Trusted Workspace：`/trust`、`/untrust` 命令，可信目录下危险工具自动通过（`~/.miniclaw/trusted_workspaces.json`）
 - [ ] 上下文窗口管理（token 限制截断/摘要）
 
 ### 阶段 7：高级功能 🔶 进行中
@@ -344,6 +347,7 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-02-28 | Trusted Workspace：`/trust`、`/untrust` 命令；可信目录下危险工具自动通过；Agent 存储 project_root 并接入 trusted_workspaces |
 | 2026-02-28 | 中断功能：Ctrl+. 或 /stop 取消正在进行的 agent 任务，恢复会话状态 |
 | 2026-02-28 | enable_search 强化：CRITICAL 原生搜索指令 + bash 描述禁止 curl；状态栏显示当前模型 |
 | 2026-02-28 | 修复：终端过小时 set_cursor_position panic；/clear 后 Ctx 指标不更新 |

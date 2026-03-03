@@ -19,6 +19,7 @@ use ratatui::{
 use crate::agent::{Agent, AgentEvent, SessionStats};
 use crate::config::{AppConfig, ModelEntry};
 use crate::session::{self, SessionData, SessionStatsData};
+use crate::trusted_workspaces;
 use crate::ui::{HeaderWidget, UiExitAction, WidgetContext};
 
 // ── Slash Command Definitions ───────────────────────────────
@@ -78,12 +79,24 @@ const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Toggle pet panel",
     },
     SlashCommand {
+        name: "/petname",
+        description: "Set pet name (/petname <name>)",
+    },
+    SlashCommand {
         name: "/model",
         description: "List or switch model (/model [id])",
     },
     SlashCommand {
         name: "/stop",
         description: "Interrupt current agent (when processing)",
+    },
+    SlashCommand {
+        name: "/trust",
+        description: "Add current workspace to trusted (auto-approve dangerous tools)",
+    },
+    SlashCommand {
+        name: "/untrust",
+        description: "Remove current workspace from trusted",
     },
     SlashCommand {
         name: "/quit",
@@ -601,11 +614,12 @@ impl HeaderWidget for PetWidget {
             Style::default().fg(art_color).add_modifier(Modifier::BOLD),
         )));
 
+        let title = format!(" Pet · {} ", ctx.pet_name);
         let widget = Paragraph::new(lines)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Pet ")
+                    .title(title)
                     .border_style(Style::default().fg(art_color)),
             )
             .alignment(Alignment::Center);
@@ -1078,6 +1092,8 @@ pub struct RatatuiUi {
     session_rects: Vec<Rect>,
     /// Input area rect of the active session (for mouse click positioning).
     active_input_rect: Rect,
+    /// Pet name displayed in the pet panel. Default "huhu".
+    pet_name: String,
 }
 
 impl RatatuiUi {
@@ -1090,6 +1106,7 @@ impl RatatuiUi {
             header_widgets.push(Box::new(PetWidget));
         }
 
+        let pet_name = config.ui.pet_name.clone();
         Self {
             anim_tick: 0,
             idle_ticks: 0,
@@ -1106,6 +1123,7 @@ impl RatatuiUi {
             tab_bar_rect: Rect::default(),
             session_rects: Vec::new(),
             active_input_rect: Rect::default(),
+            pet_name,
         }
     }
 
@@ -1745,6 +1763,7 @@ impl RatatuiUi {
             processing: tab.processing,
             anim_tick: self.anim_tick,
             pet_state: tab.pet_state,
+            pet_name: &self.pet_name,
             idle_ticks: self.idle_ticks,
             typing_intensity: self.typing_intensity,
             first_use_date: self.first_use_date,
@@ -1974,6 +1993,34 @@ impl RatatuiUi {
                 }
                 return Some(UiExitAction::Quit);
             }
+            "/trust" => {
+                let path_str = self.project_root.to_string_lossy().to_string();
+                match trusted_workspaces::add_trusted(&self.project_root) {
+                    Ok(()) => {
+                        self.active_mut().messages.push(format!(
+                            "[Workspace trusted: {}] Dangerous tools will auto-approve.",
+                            path_str
+                        ));
+                    }
+                    Err(e) => {
+                        self.active_mut().messages.push(format!("Error: {}", e));
+                    }
+                }
+            }
+            "/untrust" => {
+                let path_str = self.project_root.to_string_lossy().to_string();
+                match trusted_workspaces::remove_trusted(&self.project_root) {
+                    Ok(()) => {
+                        self.active_mut().messages.push(format!(
+                            "[Workspace untrusted: {}] Dangerous tools will require confirmation.",
+                            path_str
+                        ));
+                    }
+                    Err(e) => {
+                        self.active_mut().messages.push(format!("Error: {}", e));
+                    }
+                }
+            }
             "/stop" => {
                 if self.active().processing {
                     let tab_idx = self.active_tab.min(self.tabs.len().saturating_sub(1));
@@ -2169,6 +2216,19 @@ impl RatatuiUi {
                     if visible { "enabled" } else { "disabled" }
                 ));
             }
+            "/petname" => {
+                if arg.is_empty() {
+                    let name = self.pet_name.clone();
+                    self.active_mut()
+                        .messages
+                        .push(format!("Pet name: {}. Usage: /petname <name>", name));
+                } else {
+                    self.pet_name = arg.to_string();
+                    self.active_mut()
+                        .messages
+                        .push(format!("[Pet name set to: {}]", arg));
+                }
+            }
             "/model" => {
                 let models = self.config.list_models();
                 if arg.is_empty() {
@@ -2223,8 +2283,11 @@ impl RatatuiUi {
                     "  /import <path>     Import session from file",
                     "  /stats             Toggle stats panel",
                     "  /pet               Toggle pet panel",
+                    "  /petname [name]    Set or show pet name",
                     "  /model [id]        List models or switch to model",
                     "  /stop              Interrupt agent (when processing)",
+                    "  /trust             Add workspace to trusted (auto-approve dangerous tools)",
+                    "  /untrust           Remove workspace from trusted",
                     "  /quit              Exit the program",
                     "",
                     "  Shift+Enter/Alt+N  Insert newline (multi-line input)",

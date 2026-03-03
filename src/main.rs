@@ -4,6 +4,7 @@ mod llm;
 mod rules;
 mod session;
 mod tools;
+mod trusted_workspaces;
 mod types;
 mod ui;
 

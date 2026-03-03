@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use tokio::sync::mpsc;
@@ -14,6 +14,7 @@ use crate::llm::LlmProvider;
 use crate::rules;
 use crate::tools::risk::{self, RiskLevel};
 use crate::tools::{create_default_router, ToolRouter};
+use crate::trusted_workspaces;
 use crate::types::{ChatRequest, ChatResponse, Message, Role, StreamChunk, TokenUsage};
 
 /// Events emitted by the Agent during processing, allowing the TUI
@@ -71,6 +72,8 @@ pub struct Agent {
     pub stats: SessionStats,
     /// Current model id for multi-model support. Used when building ChatRequest.
     current_model_id: String,
+    /// Project root (working directory). Used for trusted workspace check.
+    project_root: PathBuf,
 }
 
 impl Agent {
@@ -100,6 +103,7 @@ impl Agent {
             config,
             stats: SessionStats::default(),
             current_model_id,
+            project_root: project_root.to_path_buf(),
         }
     }
 
@@ -391,17 +395,24 @@ List files and directories at a path with optional recursive traversal.
                     let risk = risk::assess_risk(&tool_call.name, &tool_call.arguments);
 
                     if risk == RiskLevel::Dangerous {
-                        let desc = risk::describe_tool_call(&tool_call.name, &tool_call.arguments);
-                        emit(AgentEvent::ToolConfirm {
-                            name: tool_call.name.clone(),
-                            arguments: tool_call.arguments.clone(),
-                            description: desc,
-                        });
+                        // Trusted workspace: auto-approve dangerous tool calls
+                        let approved = match trusted_workspaces::is_trusted(&self.project_root) {
+                            Ok(true) => true,
+                            _ => {
+                                let desc =
+                                    risk::describe_tool_call(&tool_call.name, &tool_call.arguments);
+                                emit(AgentEvent::ToolConfirm {
+                                    name: tool_call.name.clone(),
+                                    arguments: tool_call.arguments.clone(),
+                                    description: desc,
+                                });
 
-                        let approved = if let Some(rx) = confirm_rx.as_mut() {
-                            rx.recv().await.unwrap_or(false)
-                        } else {
-                            false
+                                if let Some(rx) = confirm_rx.as_mut() {
+                                    rx.recv().await.unwrap_or(false)
+                                } else {
+                                    false
+                                }
+                            }
                         };
 
                         if !approved {

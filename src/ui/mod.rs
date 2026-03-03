@@ -17,6 +17,7 @@ pub struct WidgetContext<'a> {
     pub processing: bool,
     pub anim_tick: u32,
     pub pet_state: PetState,
+    pub pet_name: &'a str,
     pub idle_ticks: u32,
     pub typing_intensity: u32,
     pub first_use_date: Option<chrono::NaiveDate>,
