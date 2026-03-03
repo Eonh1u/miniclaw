@@ -50,6 +50,10 @@ miniclaw/
     │   ├── list_directory.rs # 列目录工具
     │   └── risk.rs           # 工具风险分级（Safe/Moderate/Dangerous）
     ├── trusted_workspaces.rs # 可信工作区持久化（~/.miniclaw/trusted_workspaces.json）
+    ├── transport/           # 多通道路由（参考 OpenClaw）
+    │   ├── mod.rs            # Args 解析、resolve_mode 路由
+    │   ├── cli.rs            # CLI 模式（单次 / 交互式）
+    │   └── telegram.rs       # Telegram bot（需 --features telegram）
     └── ui/
         ├── mod.rs            # HeaderWidget trait + WidgetContext
         ├── markdown.rs       # Markdown → ratatui 富文本转换
@@ -140,7 +144,18 @@ miniclaw/
 - [x] Trusted Workspace：`/trust`、`/untrust` 命令，可信目录下危险工具自动通过（`~/.miniclaw/trusted_workspaces.json`）
 - [ ] 上下文窗口管理（token 限制截断/摘要）
 
-### 阶段 7：高级功能 🔶 进行中
+### 阶段 7：多通道路由 ✅ 完成
+
+- [x] 参考 OpenClaw 实现通道路由：`miniclaw` 根据子命令/参数路由到不同模式
+- [x] TUI 模式（默认）：`miniclaw` 或 `miniclaw tui`，交互式 Ratatui 界面
+- [x] CLI 模式：`miniclaw cli --message "..."` 单次查询；`miniclaw cli` 交互式 stdin
+- [x] 兼容 `miniclaw --message "..."` 单次 CLI
+- [x] Telegram 模式：`miniclaw telegram`（需 `cargo build --features telegram`）
+- [x] 配置 `[telegram]` 段：`bot_token`、`workspace`；环境变量 `TELEGRAM_BOT_TOKEN`
+- [x] 后台运行：`miniclaw telegram --daemon` 后台启动；`miniclaw telegram --stop` 停止
+- [x] `/model` 命令：列出可用模型、切换模型（`/model <id>`）；持久化到 `~/.miniclaw/telegram_state.json`
+
+### 阶段 8：高级功能 🔶 进行中
 
 - [x] CLAUDE.md 规则文件支持（多层级发现、自动注入 system prompt）
 - [ ] 错误处理完善（网络超时重试、优雅降级）
@@ -347,6 +362,8 @@ pub trait HeaderWidget {
 
 | 日期 | 变更 |
 |------|------|
+| 2026-03-03 | Telegram 后台模式：`--daemon`/`--stop`；`/model` 命令切换模型；telegram_state 持久化 |
+| 2026-03-03 | 多通道路由：CLI 模式（单次/交互式）、Telegram bot；参考 OpenClaw 架构；transport 模块 |
 | 2026-02-28 | Trusted Workspace：`/trust`、`/untrust` 命令；可信目录下危险工具自动通过；Agent 存储 project_root 并接入 trusted_workspaces |
 | 2026-02-28 | 中断功能：Ctrl+. 或 /stop 取消正在进行的 agent 任务，恢复会话状态 |
 | 2026-02-28 | enable_search 强化：CRITICAL 原生搜索指令 + bash 描述禁止 curl；状态栏显示当前模型 |

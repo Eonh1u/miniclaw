@@ -12,6 +12,20 @@ pub struct AppConfig {
     pub tools: ToolsConfig,
     #[serde(default)]
     pub ui: UiConfig,
+    /// Telegram bot config. Used when running `miniclaw telegram`.
+    #[serde(default)]
+    pub telegram: Option<TelegramConfig>,
+}
+
+/// Telegram bot configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelegramConfig {
+    /// Bot token from @BotFather. Can also use TELEGRAM_BOT_TOKEN env.
+    #[serde(default)]
+    pub bot_token: Option<String>,
+    /// Workspace path for tool execution (read_file, bash, etc.). Default: current dir.
+    #[serde(default)]
+    pub workspace: Option<String>,
 }
 
 /// Provider config: unified api_base, api_key, and api format. Models under a provider inherit these.
@@ -192,6 +206,7 @@ impl Default for AppConfig {
                 ],
             },
             ui: UiConfig::default(),
+            telegram: None,
         }
     }
 }

@@ -6,6 +6,7 @@ A minimal AI assistant tool inspired by [OpenClaw](https://github.com/openclaw/o
 
 miniclaw is a terminal-based AI assistant that can:
 
+- Run in multiple modes: **TUI** (default), **CLI** (one-shot or interactive), **Telegram** bot
 - Chat with LLMs (Anthropic Claude / OpenAI-compatible APIs including Qwen, DeepSeek, etc.)
 - Autonomously call tools (read files, write files, etc.) via the Agent Loop pattern
 - Be extended with new tools through a simple `Tool` trait
@@ -79,6 +80,25 @@ cargo run
 ```
 
 Or edit `~/.miniclaw/config.toml` directly (auto-generated on first run).
+
+## Modes (Channel Routing)
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| TUI | `miniclaw` or `miniclaw tui` | Interactive Ratatui interface (default) |
+| CLI one-shot | `miniclaw --message "hello"` or `miniclaw cli -m "hello"` | Single query, output to stdout |
+| CLI interactive | `miniclaw cli` | Read from stdin line by line |
+| Telegram | `miniclaw telegram` | Run as Telegram bot (requires `cargo build --features telegram`) |
+
+For Telegram: set `TELEGRAM_BOT_TOKEN` env or add `[telegram] bot_token = "..."` in config.
+
+**Telegram daemon mode:**
+```bash
+miniclaw telegram --daemon   # Start in background
+miniclaw telegram --stop    # Stop the daemon
+```
+
+**Telegram commands:** `/start`, `/help`, `/model` (list or switch: `/model <id>`)
 
 ## TUI Commands
 

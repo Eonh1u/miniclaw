@@ -6,7 +6,7 @@
 
 本项目的目标是用 Rust 构建一个**个人 AI 助手**（`miniclaw`），它的核心能力是：
 
-- 接收用户的自然语言输入（通过 ratatui TUI 终端交互）
+- 接收用户的自然语言输入（通过 TUI、CLI 或 Telegram 等多种通道）
 - 调用 LLM（如 Claude / OpenAI 兼容 API）进行推理
 - LLM 可以自主选择并调用**工具（Tools）**来完成任务（如读写文件、执行命令、搜索网页等）
 - 工具执行结果会反馈给 LLM，形成**Agent Loop（智能体循环）**
@@ -21,15 +21,20 @@
 
 ```mermaid
 flowchart TB
-    User[用户终端_TUI] -->|输入消息| TUI[Ratatui_TUI]
-    TUI -->|构建消息| AgentLoop[Agent_Loop_核心循环]
+    subgraph channels [通道层 Transport]
+        TUI[Ratatui_TUI]
+        CLI[CLI_单次/交互]
+        TG[Telegram_Bot]
+    end
+    User[用户] --> channels
+    channels -->|构建消息| AgentLoop[Agent_Loop_核心循环]
     AgentLoop -->|发送请求| LLMClient[LLM_Client_模型调用]
     LLMClient -->|返回结果+TokenUsage| AgentLoop
     AgentLoop -->|tool_call请求| ToolRouter[Tool_Router_工具路由]
     ToolRouter -->|分发执行| Tools[工具集合]
     Tools -->|执行结果| AgentLoop
-    AgentLoop -->|最终回复| TUI
-    TUI -->|输出| User
+    AgentLoop -->|最终回复| channels
+    channels -->|输出| User
 
     subgraph toolset [内置工具]
         ReadFile[读文件]
@@ -45,9 +50,9 @@ flowchart TB
 
     Tools --> toolset
     TUI --> widgets
-    Config[配置管理] --> LLMClient
+    Config[配置管理] --> channels
+    Config --> LLMClient
     Config --> ToolRouter
-    Config --> TUI
     Rules[CLAUDE.md 规则] --> AgentLoop
 ```
 
@@ -235,7 +240,28 @@ show_pet = true
 
 ---
 
-### 7. 消息与类型系统（Message Types）
+### 7. 通道路由层（Transport）
+
+**作用**：参考 OpenClaw 的 channel routing，根据启动方式将用户请求路由到不同通道。
+
+**模式**：
+
+| 模式 | 命令 | 说明 |
+|------|------|------|
+| TUI | `miniclaw` 或 `miniclaw tui` | 默认，交互式 Ratatui 界面 |
+| CLI 单次 | `miniclaw --message "..."` 或 `miniclaw cli -m "..."` | 单次查询，输出到 stdout |
+| CLI 交互 | `miniclaw cli` | 从 stdin 逐行读取，每行一次对话 |
+| Telegram | `miniclaw telegram` | 以 Telegram bot 运行（需 `--features telegram`） |
+
+**路由逻辑**：`main.rs` 解析 `Args`，`resolve_mode()` 根据 `--message` 或 `subcommand` 返回 `ResolvedMode`，再分发到对应 handler。
+
+**Telegram 配置**：`[telegram]` 段的 `bot_token`、`workspace`；环境变量 `TELEGRAM_BOT_TOKEN`。
+
+**关键文件**：`src/transport/mod.rs`, `src/transport/cli.rs`, `src/transport/telegram.rs`
+
+---
+
+### 8. 消息与类型系统（Message Types）
 
 - **Message**：role + content + tool_calls + tool_call_id
 - **ToolCall**：id + name + arguments
@@ -272,6 +298,10 @@ miniclaw/
     │   ├── mod.rs            # Tool trait + ToolRouter
     │   ├── read_file.rs      # 读文件工具
     │   └── write_file.rs     # 写文件工具
+    ├── transport/            # 通道路由（TUI/CLI/Telegram）
+    │   ├── mod.rs            # Args、resolve_mode
+    │   ├── cli.rs            # CLI 模式
+    │   └── telegram.rs       # Telegram bot
     └── ui/
         ├── mod.rs            # HeaderWidget trait + WidgetContext
         └── ratatui_ui.rs     # TUI 实现（StatsWidget, PetWidget, 宠物动画）
@@ -281,6 +311,7 @@ miniclaw/
 
 ## 数据流
 
+**TUI 模式**：
 ```
 用户输入 "读取 Cargo.toml"
   → ratatui_ui.rs 接收输入
@@ -294,4 +325,9 @@ miniclaw/
   → agent.rs 将结果作为 tool message 加入历史，再次调用 LLM（流式 SSE）
   → LLM 流式生成最终文字回复 → TUI 逐 token 渲染
   → ratatui_ui.rs 渲染完成，StatsWidget 更新 token 计数
+```
+
+**CLI 模式**：`transport/cli.rs` 接收 stdin 或 `--message`，调用 `Agent::process_message`，输出到 stdout。
+
+**Telegram 模式**：`transport/telegram.rs` 接收 Telegram 消息，调用 `Agent::process_message`，通过 `bot.edit_message_text` 回复。
 ```
